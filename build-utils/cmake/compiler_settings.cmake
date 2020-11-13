@@ -1,15 +1,9 @@
-#Set compilers settings for all platforms/compilers.
+# Set compilers settings for all platforms/compilers.
 #---------------------------------------------------
 
 #-----------------
 # Includes modules
 include(CheckIncludeFiles)
-
-#----------------------------------
-# Set default build type to "Release"
-if(NOT CMAKE_BUILD_TYPE)
-  set(CMAKE_BUILD_TYPE "Release")
-endif()
 
 #------------------------------
 # Enables IDE folders y default
@@ -32,32 +26,13 @@ set(cxx_all_flags
   CMAKE_CXX_FLAGS_RELEASE
   CMAKE_C_FLAGS_RELEASE)
 
-set(cxx_all_but_default_flags
-  CMAKE_CXX_FLAGS_DEBUG
-  CMAKE_C_FLAGS_DEBUG
-  CMAKE_CXX_FLAGS_MINSIZEREL
-  CMAKE_C_FLAGS_MINSIZEREL
-  CMAKE_CXX_FLAGS_RELWITHDEBINFO
-  CMAKE_C_FLAGS_RELWITHDEBINFO
-  CMAKE_CXX_FLAGS_RELEASE
-  CMAKE_C_FLAGS_RELEASE)
-
-# Lists debug cxx flags only
-set(cxx_debug_flags
-  CMAKE_CXX_FLAGS_DEBUG
-  CMAKE_C_FLAGS_DEBUG)
-
-# Lists release cxx flags only
-set(cxx_release_flags
-  CMAKE_CXX_FLAGS_MINSIZEREL
-  CMAKE_C_FLAGS_MINSIZEREL
-  CMAKE_CXX_FLAGS_RELWITHDEBINFO
-  CMAKE_C_FLAGS_RELWITHDEBINFO
-  CMAKE_CXX_FLAGS_RELEASE
-  CMAKE_C_FLAGS_RELEASE)
-
 #--------------------------------------
 # Cross compiler compilation flags
+
+# Requires C++11
+set(CMAKE_CXX_STANDARD 11)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
 
 # Simd math force ref
 if(ozz_build_simd_ref)
@@ -74,25 +49,22 @@ if(MSVC)
   # Disables crt secure warnings
   set_property(DIRECTORY APPEND PROPERTY COMPILE_DEFINITIONS _CRT_SECURE_NO_WARNINGS)
 
-  # Removes any exception mode
-  string(REGEX REPLACE " /EH.*" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
-  string(REGEX REPLACE " /EH.*" "" CMAKE_C_FLAGS "${CMAKE_C_FLAGS}")
-  set_property(DIRECTORY APPEND PROPERTY COMPILE_DEFINITIONS _HAS_EXCEPTIONS=0)
-  
   # Adds support for multiple processes builds
   set_property(DIRECTORY APPEND PROPERTY COMPILE_OPTIONS "/MP")
 
-  #---------------
-  # For all builds
-  foreach(flag ${cxx_all_flags})
-    # Set the warning level to W4
-    string(REGEX REPLACE "/W3" "/W4" ${flag} "${${flag}}")
-    
-    # Prefers static lining with runtime libraries, to ease installation
-    string(REGEX REPLACE "/MD" "/MT" ${flag} "${${flag}}")
+  # Set the warning level to W4
+  set_property(DIRECTORY APPEND PROPERTY COMPILE_OPTIONS "/W4")
 
-	# Prefers /Ox (full optimization) to /O2 (maximize speed)
-    string(REGEX REPLACE "/O2" "/Ox" ${flag} "${${flag}}")
+  # Set warning as error
+  set_property(DIRECTORY APPEND PROPERTY COMPILE_OPTIONS "/WX")
+
+  # Select whether to use the DLL version or the static library version of the Visual C++ runtime library.
+  foreach(flag ${cxx_all_flags})
+    if (ozz_build_msvc_rt_dll)
+      string(REGEX REPLACE "/MT" "/MD" ${flag} "${${flag}}")
+    else()
+      string(REGEX REPLACE "/MD" "/MT" ${flag} "${${flag}}")
+    endif()
   endforeach()
 
 #--------------------------------------
@@ -100,62 +72,45 @@ if(MSVC)
 # Modify default GCC compilation flags
 else()
 
-  #---------------------------
-  # For the common build flags
-
-  # Enable c++11
-  if(ozz_build_cpp11)
-    set_property(DIRECTORY APPEND PROPERTY COMPILE_OPTIONS "$<$<STREQUAL:$<TARGET_PROPERTY:LINKER_LANGUAGE>,CXX>:-std=c++11>")
-  endif()
-
-  # Enable extra level of warning
-  #if(NOT CMAKE_CXX_FLAGS MATCHES "-Wextra")
-  #  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wextra")
-  #endif()
-
   # Set the warning level to Wall
   set_property(DIRECTORY APPEND PROPERTY COMPILE_OPTIONS "-Wall")
 
-  # Automatically selects native architecture optimizations (sse...)
-  #set_property(DIRECTORY APPEND PROPERTY COMPILE_OPTIONS "-march=native")
+  # Enable extra level of warning
+  #set_property(DIRECTORY APPEND PROPERTY COMPILE_OPTIONS "-Wextra")
 
-  #----------------------
+  # Set warning as error
+  set_property(DIRECTORY APPEND PROPERTY COMPILE_OPTIONS "-Werror")
+
+  # Disables warning: ignored-attributes reports issue when using _m128 as template argument
+  check_cxx_compiler_flag("-Wignored-attributes" W_IGNORED_ATTRIBUTES)
+  if(W_IGNORED_ATTRIBUTES)
+    set_property(DIRECTORY APPEND PROPERTY COMPILE_OPTIONS "-Wno-ignored-attributes")
+  endif()
+
+  # Enables warning: sign comparison warnings
+  check_cxx_compiler_flag("-Wsign-compare" W_SIGN_COMPARE)
+  if(W_SIGN_COMPARE)
+    set_property(DIRECTORY APPEND PROPERTY COMPILE_OPTIONS "-Wsign-compare")
+  endif()
+
+  # Check some more options availability for the targeted compiler
+  check_cxx_compiler_flag("-Wnull-dereference" W_NULL_DEREFERENCE)
+  check_cxx_compiler_flag("-Wpragma-pack" W_PRAGMA_PACK)
+
   # Enables debug glibcxx if NDebug isn't defined, not supported by APPLE
   if(NOT APPLE)
-    set_property(DIRECTORY APPEND PROPERTY COMPILE_DEFINITIONS $<$<CONFIG:Debug>:_GLIBCXX_DEBUG>)
+    set_property(DIRECTORY APPEND PROPERTY COMPILE_DEFINITIONS "$<$<CONFIG:Debug>:_GLIBCXX_DEBUG>")
   endif()
 
   #----------------------
   # Sets emscripten output
   if(EMSCRIPTEN)
     SET(CMAKE_EXECUTABLE_SUFFIX ".html")
+    add_link_options(-s DISABLE_DEPRECATED_FIND_EVENT_TARGET_BEHAVIOR=0)
 
     #if(NOT ozz_build_simd_ref)
     #  set_property(DIRECTORY APPEND PROPERTY COMPILE_OPTIONS "-msse2")
     #endif()
-  endif()
-
-  #----------------------
-  # Handles coverage options
-  if(ozz_build_coverage)
-    # Extern libraries and samples are not included in the coverage, as not covered by automatic dashboard tests.
-    set(CTEST_CUSTOM_COVERAGE_EXCLUDE ${CTEST_CUSTOM_COVERAGE_EXCLUDE} "extern/" "samples/")
-
-    # Linker options
-    if(NOT ${CMAKE_SHARED_LINKER_FLAGS_DEBUG} MATCHES "-fprofile-arcs -ftest-coverage")
-      set(CMAKE_SHARED_LINKER_FLAGS_DEBUG "${CMAKE_SHARED_LINKER_FLAGS_DEBUG} -fprofile-arcs -ftest-coverage")
-    endif()
-    if(NOT ${CMAKE_EXE_LINKER_FLAGS_DEBUG} MATCHES "-fprofile-arcs -ftest-coverage")
-      set(CMAKE_EXE_LINKER_FLAGS_DEBUG "${CMAKE_EXE_LINKER_FLAGS_DEBUG} -fprofile-arcs -ftest-coverage")
-    endif()
-
-    # Compiler options
-    foreach(flag ${cxx_debug_flags})
-      if(NOT ${flag} MATCHES "-fprofile-arcs -ftest-coverage")
-        set(${flag} "${${flag}} -fprofile-arcs -ftest-coverage")
-      endif()
-    endforeach()
-    #set_property(DIRECTORY APPEND PROPERTY COMPILE_OPTIONS "-fprofile-arcs -ftest-coverage")
   endif()
 
 endif()
@@ -171,7 +126,7 @@ endforeach()
 
 message(STATUS "---------------------------------------------------------")
 
-get_directory_property(DirectoryCompileOptions DIRECTORY ${CMAKE_SOURCE_DIR} COMPILE_OPTIONS)
+get_directory_property(DirectoryCompileOptions DIRECTORY ${PROJECT_SOURCE_DIR} COMPILE_OPTIONS)
 message(STATUS "Directory Compile Options:")
 foreach(opt ${DirectoryCompileOptions})
   message(STATUS ${opt})
@@ -179,7 +134,7 @@ endforeach()
 
 message(STATUS "---------------------------------------------------------")
 
-get_directory_property(DirectoryCompileDefinitions DIRECTORY ${CMAKE_SOURCE_DIR} COMPILE_DEFINITIONS)
+get_directory_property(DirectoryCompileDefinitions DIRECTORY ${PROJECT_SOURCE_DIR} COMPILE_DEFINITIONS)
 message(STATUS "Directory Compile Definitions:")
 foreach(def ${DirectoryCompileDefinitions})
   message(STATUS ${def})
@@ -197,7 +152,9 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO ".")
 
 #-------------------------------
 # Set a postfix for output files
-set(CMAKE_DEBUG_POSTFIX "_d")
-set(CMAKE_RELEASE_POSTFIX "_r")
-set(CMAKE_MINSIZEREL_POSTFIX "_rs")
-set(CMAKE_RELWITHDEBINFO_POSTFIX "_rd")
+if(ozz_build_postfix)
+  set(CMAKE_DEBUG_POSTFIX "_d")
+  set(CMAKE_RELEASE_POSTFIX "_r")
+  set(CMAKE_MINSIZEREL_POSTFIX "_rs")
+  set(CMAKE_RELWITHDEBINFO_POSTFIX "_rd")
+endif()

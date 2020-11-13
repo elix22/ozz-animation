@@ -549,7 +549,7 @@ static int convertMacKeyCode( unsigned int macKeyCode )
 {
     NSUInteger length;
     NSString* characters;
-    int i, code = convertMacKeyCode( [event keyCode] );
+    int code = convertMacKeyCode( [event keyCode] );
 
     if( code != -1 )
     {
@@ -567,7 +567,7 @@ static int convertMacKeyCode( unsigned int macKeyCode )
             characters = [event characters];
             length = [characters length];
 
-            for( i = 0;  i < length;  i++ )
+            for(NSUInteger i = 0;  i < length;  i++ )
             {
                 _glfwInputChar( [characters characterAtIndex:i], GLFW_PRESS );
             }
@@ -597,7 +597,7 @@ static int convertMacKeyCode( unsigned int macKeyCode )
 {
     NSUInteger length;
     NSString* characters;
-    int i, code = convertMacKeyCode( [event keyCode] );
+    int code = convertMacKeyCode( [event keyCode] );
 
     if( code != -1 )
     {
@@ -606,7 +606,7 @@ static int convertMacKeyCode( unsigned int macKeyCode )
         characters = [event characters];
         length = [characters length];
 
-        for( i = 0;  i < length;  i++ )
+        for(NSUInteger i = 0;  i < length;  i++ )
         {
             _glfwInputChar( [characters characterAtIndex:i], GLFW_RELEASE );
         }
@@ -700,6 +700,7 @@ int  _glfwPlatformOpenWindow( int width, int height,
     // Aux buffers probably aren't accelerated either
 
     CFDictionaryRef fullscreenMode = NULL;
+    /*
     if( wndconfig->mode == GLFW_FULLSCREEN )
     {
         fullscreenMode =
@@ -718,7 +719,7 @@ int  _glfwPlatformOpenWindow( int width, int height,
 
         width = [[(id)fullscreenMode objectForKey:(id)kCGDisplayWidth] intValue];
         height = [[(id)fullscreenMode objectForKey:(id)kCGDisplayHeight] intValue];
-    }
+    }*/
 
     unsigned int styleMask = 0;
     if( wndconfig->mode == GLFW_WINDOW )
@@ -743,7 +744,7 @@ int  _glfwPlatformOpenWindow( int width, int height,
     [_glfwWin.window setContentView:[[GLFWContentView alloc] init]];
     [_glfwWin.window setDelegate:_glfwWin.delegate];
     [_glfwWin.window setAcceptsMouseMovedEvents:YES];
-    [_glfwWin.window center];
+    [(NSWindow*) _glfwWin.window center];
 
     if( [_glfwWin.window respondsToSelector:@selector(setRestorable:)] )
     {
@@ -965,6 +966,7 @@ void _glfwPlatformSwapBuffers( void )
 {
     // ARP appears to be unnecessary, but this is future-proof
     [_glfwWin.context flushBuffer];
+    [_glfwWin.context update];
 }
 
 

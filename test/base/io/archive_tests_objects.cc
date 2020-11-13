@@ -3,7 +3,7 @@
 // ozz-animation is hosted at http://github.com/guillaumeblanc/ozz-animation  //
 // and distributed under the MIT License (MIT).                               //
 //                                                                            //
-// Copyright (c) 2015 Guillaume Blanc                                         //
+// Copyright (c) Guillaume Blanc                                              //
 //                                                                            //
 // Permission is hereby granted, free of charge, to any person obtaining a    //
 // copy of this software and associated documentation files (the "Software"), //
@@ -42,18 +42,17 @@ namespace ozz {
 namespace io {
 
 // Specializes Extrusive type external Save and Load functions.
-template <>
-void Save(OArchive& _archive, const Extrusive* _test, size_t _count) {
+void Extern<Extrusive>::Save(OArchive& _archive, const Extrusive* _test,
+                             size_t _count) {
   _archive << ozz::io::MakeArray(&_test->i, _count);
 }
-template <>
-void Load(IArchive& _archive, Extrusive* _test, size_t _count,
-          uint32_t _version) {
+void Extern<Extrusive>::Load(IArchive& _archive, Extrusive* _test,
+                             size_t _count, uint32_t _version) {
   EXPECT_EQ(_version, 0u);
   _archive >> ozz::io::MakeArray(&_test->i, _count);
 }
-}  // ozz
-}  // io
+}  // namespace io
+}  // namespace ozz
 
 void Tagged1::Save(ozz::io::OArchive& /*_archive*/) const {}
 void Tagged1::Load(ozz::io::IArchive& /*_archive*/, uint32_t /*_version*/) {}

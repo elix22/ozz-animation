@@ -3,7 +3,7 @@
 // ozz-animation is hosted at http://github.com/guillaumeblanc/ozz-animation  //
 // and distributed under the MIT License (MIT).                               //
 //                                                                            //
-// Copyright (c) 2015 Guillaume Blanc                                         //
+// Copyright (c) Guillaume Blanc                                              //
 //                                                                            //
 // Permission is hereby granted, free of charge, to any person obtaining a    //
 // copy of this software and associated documentation files (the "Software"), //
@@ -38,7 +38,8 @@
 #endif  // __APPLE__
 
 #if EMSCRIPTEN
-#include "emscripten.h"
+#include <emscripten.h>
+#include <emscripten/html5.h>
 #endif  // EMSCRIPTEN
 
 #include "framework/image.h"
@@ -71,7 +72,7 @@ const ozz::sample::Resolution resolution_presets[] = {
     {1400, 1050}, {1440, 900}, {1600, 900}, {1600, 1200}, {1680, 1050},
     {1920, 1080}, {1920, 1200}};
 const int kNumPresets = OZZ_ARRAY_SIZE(resolution_presets);
-}
+}  // namespace
 
 // Check resolution argument is within 0 - kNumPresets
 static bool ResolutionCheck(const ozz::options::Option& _option,
@@ -86,7 +87,7 @@ OZZ_OPTIONS_DECLARE_INT_FN(resolution, "Resolution index (0 to 17).", 5, false,
 
 namespace ozz {
 namespace sample {
-Application* Application::application_ = NULL;
+Application* Application::application_ = nullptr;
 
 Application::Application()
     : exit_(false),
@@ -94,19 +95,16 @@ Application::Application()
       fix_update_rate(false),
       fixed_update_rate(60.f),
       time_factor_(1.f),
+      time_(0.f),
       last_idle_time_(0.),
-      camera_(NULL),
-      shooter_(NULL),
       show_help_(false),
       show_grid_(true),
       show_axes_(true),
       capture_video_(false),
       capture_screenshot_(false),
-      renderer_(NULL),
-      im_gui_(NULL),
-      fps_(memory::default_allocator()->New<Record>(128)),
-      update_time_(memory::default_allocator()->New<Record>(128)),
-      render_time_(memory::default_allocator()->New<Record>(128)),
+      fps_(New<Record>(128)),
+      update_time_(New<Record>(128)),
+      render_time_(New<Record>(128)),
       resolution_(resolution_presets[0]) {
 #ifndef NDEBUG
   // Assert presets are correctly sorted.
@@ -118,11 +116,7 @@ Application::Application()
 #endif  //  NDEBUG
 }
 
-Application::~Application() {
-  memory::default_allocator()->Delete(fps_);
-  memory::default_allocator()->Delete(update_time_);
-  memory::default_allocator()->Delete(render_time_);
-}
+Application::~Application() {}
 
 int Application::Run(int _argc, const char** _argv, const char* _version,
                      const char* _title) {
@@ -140,7 +134,8 @@ int Application::Run(int _argc, const char** _argv, const char* _version,
              << std::endl;
 
   // Parse command line arguments.
-  const char* usage = "Ozz animation sample. See README.md file for more details.";
+  const char* usage =
+      "Ozz animation sample. See README.md file for more details.";
   ozz::options::ParseResult result =
       ozz::options::ParseCommandLine(_argc, _argv, _version, usage);
   if (result != ozz::options::kSuccess) {
@@ -168,7 +163,7 @@ int Application::Run(int _argc, const char** _argv, const char* _version,
   if (OPTIONS_render) {
     // Initialize GLFW
     if (!glfwInit()) {
-      application_ = NULL;
+      application_ = nullptr;
       return EXIT_FAILURE;
     }
 
@@ -192,17 +187,24 @@ int Application::Run(int _argc, const char** _argv, const char* _version,
       log::Out() << "Successfully opened OpenGL window version \""
                  << glGetString(GL_VERSION) << "\"." << std::endl;
 
-      // Allocates and initializes internal objects.
-      camera_ = memory::default_allocator()->New<internal::Camera>();
-      renderer_ =
-          memory::default_allocator()->New<internal::RendererImpl>(camera_);
+      // Allocates and initializes camera
+      camera_ = make_unique<internal::Camera>();
+      math::Float3 camera_center;
+      math::Float2 camera_angles;
+      float distance;
+      if (GetCameraInitialSetup(&camera_center, &camera_angles, &distance)) {
+        camera_->Reset(camera_center, camera_angles, distance);
+      }
+
+      // Allocates and initializes renderer.
+      renderer_ = make_unique<internal::RendererImpl>(camera_.get());
       success = renderer_->Initialize();
 
       if (success) {
-        shooter_ = memory::default_allocator()->New<internal::Shooter>();
-        im_gui_ = memory::default_allocator()->New<internal::ImGuiImpl>();
+        shooter_ = make_unique<internal::Shooter>();
+        im_gui_ = make_unique<internal::ImGuiImpl>();
 
-#ifndef EMSCRIPTEN // Better not rename web page.
+#ifndef EMSCRIPTEN  // Better not rename web page.
         glfwSetWindowTitle(_title);
 #endif  // EMSCRIPTEN
 
@@ -213,16 +215,11 @@ int Application::Run(int _argc, const char** _argv, const char* _version,
 
         // Loop the sample.
         success = Loop();
-
-        memory::default_allocator()->Delete(shooter_);
-        shooter_ = NULL;
-        memory::default_allocator()->Delete(im_gui_);
-        im_gui_ = NULL;
+        shooter_.reset();
+        im_gui_.reset();
       }
-      memory::default_allocator()->Delete(renderer_);
-      renderer_ = NULL;
-      memory::default_allocator()->Delete(camera_);
-      camera_ = NULL;
+      renderer_.reset();
+      camera_.reset();
     }
 
     // Closes window and terminates GLFW.
@@ -238,19 +235,23 @@ int Application::Run(int _argc, const char** _argv, const char* _version,
     log::Err() << "An error occurred during sample execution." << std::endl;
   }
 
-  application_ = NULL;
+  application_ = nullptr;
 
   return success ? EXIT_SUCCESS : EXIT_FAILURE;
 }
 
-void OneLoopCbk(void* _arg) {
-  Application* app = reinterpret_cast<Application*>(_arg);
-  static int loops = 0;
-  app->OneLoop(loops++);
+// Helper function to detecte key pressed and released.
+template <int _Key>
+bool KeyPressed() {
+  static int previous_key = glfwGetKey(_Key);
+  const int key = glfwGetKey(_Key);
+  const bool pressed = previous_key == GLFW_PRESS && key == GLFW_RELEASE;
+  previous_key = key;
+  return pressed;
 }
 
 Application::LoopStatus Application::OneLoop(int _loops) {
-  Profiler profile(fps_);  // Profiles frame.
+  Profiler profile(fps_.get());  // Profiles frame.
 
   // Tests for a manual exit request.
   if (exit_ || glfwGetKey(GLFW_KEY_ESC) == GLFW_PRESS) {
@@ -273,22 +274,23 @@ Application::LoopStatus Application::OneLoop(int _loops) {
 
     return kContinue;  // ...but don't do anything.
   }
-#else   // EMSCRIPTEN
-  // Detect canvas resizing which isn't automatically detected.
-  int width, height, fullscreen;
-  emscripten_get_canvas_size(&width, &height, &fullscreen);
+#else
+  int width, height;
+  if (emscripten_get_canvas_element_size(nullptr, &width, &height) !=
+      EMSCRIPTEN_RESULT_SUCCESS) {
+    return kBreakFailure;
+  }
   if (width != resolution_.width || height != resolution_.height) {
     ResizeCbk(width, height);
   }
 #endif  // EMSCRIPTEN
 
   // Enable/disable help on F1 key.
-  static int previous_f1 = glfwGetKey(GLFW_KEY_F1);
-  const int f1 = glfwGetKey(GLFW_KEY_F1);
-  if (previous_f1 == GLFW_RELEASE && f1 == GLFW_PRESS) {
-    show_help_ = !show_help_;
-  }
-  previous_f1 = f1;
+  show_help_ = show_help_ ^ KeyPressed<GLFW_KEY_F1>();
+
+  // Capture screenshot or video.
+  capture_screenshot_ = KeyPressed<'S'>();
+  capture_video_ = capture_video_ ^ KeyPressed<'V'>();
 
   // Do the main loop.
   if (!Idle(_loops == 0)) {
@@ -303,6 +305,12 @@ Application::LoopStatus Application::OneLoop(int _loops) {
   }
 
   return kContinue;
+}
+
+void OneLoopCbk(void* _arg) {
+  Application* app = reinterpret_cast<Application*>(_arg);
+  static int loops = 0;
+  app->OneLoop(loops++);
 }
 
 bool Application::Loop() {
@@ -336,10 +344,10 @@ bool Application::Display() {
   bool success = true;
 
   {  // Profiles rendering excluding GUI.
-    Profiler profile(render_time_);
+    Profiler profile(render_time_.get());
 
     GL(ClearDepth(1.f));
-    GL(ClearColor(.4f, .42f, .38f, 0.f));
+    GL(ClearColor(.4f, .42f, .38f, 1.f));
     GL(Clear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT));
 
     // Setup default states
@@ -354,7 +362,7 @@ bool Application::Display() {
 
     // Forwards display event to the inheriting application.
     if (success) {
-      success = OnDisplay(renderer_);
+      success = OnDisplay(renderer_.get());
     }
   }  // Ends profiling.
 
@@ -377,6 +385,7 @@ bool Application::Display() {
   // Capture back buffer.
   if (capture_screenshot_ || capture_video_) {
     shooter_->Capture(GL_BACK);
+    capture_screenshot_ = false;
   }
 
   // Swaps current window.
@@ -409,22 +418,25 @@ bool Application::Idle(bool _first_frame) {
     update_delta = 0.f;
   } else {
     if (fix_update_rate) {
-      update_delta = 1.f / fixed_update_rate;
+      update_delta = time_factor_ / fixed_update_rate;
     } else {
       update_delta = delta * time_factor_;
     }
   }
 
-  // Updates screen shooter object.
-  if (shooter_) {
-    shooter_->Update();
-  }
+  // Increment current application time
+  time_ += update_delta;
 
   // Forwards update event to the inheriting application.
   bool update_result;
   {  // Profiles update scope.
-    Profiler profile(update_time_);
-    update_result = OnUpdate(update_delta);
+    Profiler profile(update_time_.get());
+    update_result = OnUpdate(update_delta, time_);
+  }
+
+  // Updates screen shooter object.
+  if (shooter_) {
+    shooter_->Update();
   }
 
   // Update camera model-view matrix.
@@ -460,17 +472,19 @@ bool Application::Gui() {
   input.lmb_pressed = glfwGetMouseButton(GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
 
   // Starts frame
-  static_cast<internal::ImGuiImpl*>(im_gui_)->BeginFrame(input, window_rect,
-                                                         renderer_);
+  im_gui_->BeginFrame(input, window_rect, renderer_.get());
 
+  // Downcast to public imgui.
+  ImGui* im_gui = im_gui_.get();
   // Help gui.
   {
     math::RectFloat rect(kGuiMargin, kGuiMargin,
                          window_rect.width - kGuiMargin * 2.f,
                          window_rect.height - kGuiMargin * 2.f);
-    ImGui::Form form(im_gui_, "Show help", rect, &show_help_, false);
+    // Doesn't constrain form is it's opened, so it covers all screen.
+    ImGui::Form form(im_gui, "Show help", rect, &show_help_, !show_help_);
     if (show_help_) {
-      im_gui_->DoLabel(help_.c_str(), ImGui::kLeft, false);
+      im_gui->DoLabel(help_.c_str(), ImGui::kLeft, false);
     }
   }
 
@@ -480,7 +494,7 @@ bool Application::Gui() {
     static bool open = true;
     math::RectFloat rect(kGuiMargin, kGuiMargin, kFormWidth,
                          window_rect.height - kGuiMargin * 2.f - kHelpMargin);
-    ImGui::Form form(im_gui_, "Framework", rect, &open, true);
+    ImGui::Form form(im_gui, "Framework", rect, &open, true);
     if (open) {
       success = FrameworkGui();
     }
@@ -492,23 +506,25 @@ bool Application::Gui() {
     math::RectFloat rect(window_rect.width - kFormWidth - kGuiMargin,
                          kGuiMargin, kFormWidth,
                          window_rect.height - kGuiMargin * 2 - kHelpMargin);
-    ImGui::Form form(im_gui_, "Sample", rect, &open, true);
+    ImGui::Form form(im_gui, "Sample", rect, &open, true);
     if (open) {
       // Forwards event to the inherited application.
-      success = OnGui(im_gui_);
+      success = OnGui(im_gui);
     }
   }
 
   // Ends frame
-  static_cast<internal::ImGuiImpl*>(im_gui_)->EndFrame();
+  im_gui_->EndFrame();
 
   return success;
 }
 
 bool Application::FrameworkGui() {
+  // Downcast to public imgui.
+  ImGui* im_gui = im_gui_.get();
   {  // Render statistics
     static bool open = true;
-    ImGui::OpenClose stat_oc(im_gui_, "Statistics", &open);
+    ImGui::OpenClose stat_oc(im_gui, "Statistics", &open);
     if (open) {
       char szLabel[64];
       {  // FPS
@@ -516,34 +532,34 @@ bool Application::FrameworkGui() {
         std::sprintf(szLabel, "FPS: %.0f",
                      statistics.mean == 0.f ? 0.f : 1000.f / statistics.mean);
         static bool fps_open = false;
-        ImGui::OpenClose stats(im_gui_, szLabel, &fps_open);
+        ImGui::OpenClose stats(im_gui, szLabel, &fps_open);
         if (fps_open) {
           std::sprintf(szLabel, "Frame: %.2f ms", statistics.mean);
-          im_gui_->DoGraph(szLabel, 0.f, statistics.max, statistics.latest,
-                           fps_->cursor(), fps_->record_begin(),
-                           fps_->record_end());
+          im_gui->DoGraph(szLabel, 0.f, statistics.max, statistics.latest,
+                          fps_->cursor(), fps_->record_begin(),
+                          fps_->record_end());
         }
       }
       {  // Update time
         Record::Statistics statistics = update_time_->GetStatistics();
         std::sprintf(szLabel, "Update: %.2f ms", statistics.mean);
         static bool update_open = true;  // This is the most relevant for ozz.
-        ImGui::OpenClose stats(im_gui_, szLabel, &update_open);
+        ImGui::OpenClose stats(im_gui, szLabel, &update_open);
         if (update_open) {
-          im_gui_->DoGraph(NULL, 0.f, statistics.max, statistics.latest,
-                           update_time_->cursor(), update_time_->record_begin(),
-                           update_time_->record_end());
+          im_gui->DoGraph(nullptr, 0.f, statistics.max, statistics.latest,
+                          update_time_->cursor(), update_time_->record_begin(),
+                          update_time_->record_end());
         }
       }
       {  // Render time
         Record::Statistics statistics = render_time_->GetStatistics();
         std::sprintf(szLabel, "Render: %.2f ms", statistics.mean);
         static bool render_open = false;
-        ImGui::OpenClose stats(im_gui_, szLabel, &render_open);
+        ImGui::OpenClose stats(im_gui, szLabel, &render_open);
         if (render_open) {
-          im_gui_->DoGraph(NULL, 0.f, statistics.max, statistics.latest,
-                           render_time_->cursor(), render_time_->record_begin(),
-                           render_time_->record_end());
+          im_gui->DoGraph(nullptr, 0.f, statistics.max, statistics.latest,
+                          render_time_->cursor(), render_time_->record_begin(),
+                          render_time_->record_end());
         }
       }
     }
@@ -551,24 +567,24 @@ bool Application::FrameworkGui() {
 
   {  // Time control
     static bool open = false;
-    ImGui::OpenClose stats(im_gui_, "Time control", &open);
+    ImGui::OpenClose stats(im_gui, "Time control", &open);
     if (open) {
-      im_gui_->DoButton("Freeze", true, &freeze_);
-      im_gui_->DoCheckBox("Fix update rate", &fix_update_rate, true);
+      im_gui->DoButton("Freeze", true, &freeze_);
+      im_gui->DoCheckBox("Fix update rate", &fix_update_rate, true);
       if (!fix_update_rate) {
         char sz_factor[64];
         std::sprintf(sz_factor, "Time factor: %.2f", time_factor_);
-        im_gui_->DoSlider(sz_factor, -5.f, 5.f, &time_factor_);
-        if (im_gui_->DoButton("Reset time factor", time_factor_ != 1.f)) {
+        im_gui->DoSlider(sz_factor, -5.f, 5.f, &time_factor_);
+        if (im_gui->DoButton("Reset time factor", time_factor_ != 1.f)) {
           time_factor_ = 1.f;
         }
       } else {
         char sz_fixed_update_rate[64];
         std::sprintf(sz_fixed_update_rate, "Update rate: %.0f fps",
                      fixed_update_rate);
-        im_gui_->DoSlider(sz_fixed_update_rate, 1.f, 200.f, &fixed_update_rate,
-                          .5f, true);
-        if (im_gui_->DoButton("Reset update rate", fixed_update_rate != 60.f)) {
+        im_gui->DoSlider(sz_fixed_update_rate, 1.f, 200.f, &fixed_update_rate,
+                         .5f, true);
+        if (im_gui->DoButton("Reset update rate", fixed_update_rate != 60.f)) {
           fixed_update_rate = 60.f;
         }
       }
@@ -577,12 +593,12 @@ bool Application::FrameworkGui() {
 
   {  // Rendering options
     static bool open = false;
-    ImGui::OpenClose options(im_gui_, "Options", &open);
+    ImGui::OpenClose options(im_gui, "Options", &open);
     if (open) {
       // Multi-sampling.
       static bool fsaa_available = glfwGetWindowParam(GLFW_FSAA_SAMPLES) != 0;
       static bool fsaa_enabled = fsaa_available;
-      if (im_gui_->DoCheckBox("Anti-aliasing", &fsaa_enabled, fsaa_available)) {
+      if (im_gui->DoCheckBox("Anti-aliasing", &fsaa_enabled, fsaa_available)) {
         if (fsaa_enabled) {
           GL(Enable(GL_MULTISAMPLE));
         } else {
@@ -591,12 +607,12 @@ bool Application::FrameworkGui() {
       }
       // Vertical sync
       static bool vertical_sync_ = true;  // On by default.
-      if (im_gui_->DoCheckBox("Vertical sync", &vertical_sync_, true)) {
+      if (im_gui->DoCheckBox("Vertical sync", &vertical_sync_, true)) {
         glfwSwapInterval(vertical_sync_ ? 1 : 0);
       }
 
-      im_gui_->DoCheckBox("Show grid", &show_grid_, true);
-      im_gui_->DoCheckBox("Show axes", &show_axes_, true);
+      im_gui->DoCheckBox("Show grid", &show_grid_, true);
+      im_gui->DoCheckBox("Show axes", &show_axes_, true);
     }
 
     // Searches for matching resolution settings.
@@ -615,7 +631,7 @@ bool Application::FrameworkGui() {
     char szResolution[64];
     std::sprintf(szResolution, "Resolution: %dx%d", resolution_.width,
                  resolution_.height);
-    if (im_gui_->DoSlider(szResolution, 0, kNumPresets - 1, &preset_lookup)) {
+    if (im_gui->DoSlider(szResolution, 0, kNumPresets - 1, &preset_lookup)) {
       // Resolution changed.
       resolution_ = resolution_presets[preset_lookup];
       glfwSetWindowSize(resolution_.width, resolution_.height);
@@ -624,22 +640,31 @@ bool Application::FrameworkGui() {
 
   {  // Capture
     static bool open = false;
-    ImGui::OpenClose controls(im_gui_, "Capture", &open);
+    ImGui::OpenClose controls(im_gui, "Capture", &open);
     if (open) {
-      im_gui_->DoButton("Capture video", true, &capture_video_);
-      capture_screenshot_ =
-          im_gui_->DoButton("Capture screenshot", !capture_video_);
+      im_gui->DoButton("Capture video", true, &capture_video_);
+      capture_screenshot_ |= im_gui->DoButton(
+          "Capture screenshot", !capture_video_, &capture_screenshot_);
     }
   }
 
   {  // Controls
     static bool open = false;
-    ImGui::OpenClose controls(im_gui_, "Camera controls", &open);
+    ImGui::OpenClose controls(im_gui, "Camera controls", &open);
     if (open) {
-      camera_->OnGui(im_gui_);
+      camera_->OnGui(im_gui);
     }
   }
   return true;
+}
+
+bool Application::GetCameraInitialSetup(math::Float3* _center,
+                                        math::Float2* _angles,
+                                        float* _distance) const {
+  (void)_center;
+  (void)_angles;
+  (void)_distance;
+  return false;
 }
 
 // Default implementation doesn't override camera location.
@@ -680,11 +705,11 @@ void Application::ParseReadme() {
   // Allocate enough space to store the whole file.
   const size_t read_length = file.Size();
   ozz::memory::Allocator* allocator = ozz::memory::default_allocator();
-  char* content = allocator->Allocate<char>(read_length);
+  char* content = reinterpret_cast<char*>(allocator->Allocate(read_length, 4));
 
   // Read the content
   if (file.Read(content, read_length) == read_length) {
-    help_ = ozz::String::Std(content, content + read_length);
+    help_ = ozz::string(content, content + read_length);
   } else {
     help_ = error_message;
   }
@@ -692,5 +717,5 @@ void Application::ParseReadme() {
   // Deallocate temporary buffer;
   allocator->Deallocate(content);
 }
-}  // sample
-}  // ozz
+}  // namespace sample
+}  // namespace ozz

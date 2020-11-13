@@ -1,3 +1,120 @@
+Release version 0.13.0
+----------------------
+
+* Tools
+  - [gltf2ozz] Command line tool utility to import animations and skeletons from glTF files. gltf2ozz can be configured via command line options and [json configuration files](src/animation/offline/tools/reference.json), in the exact same way as fbx2ozz.
+  - #91 Fixup animation name when used as an output filename (via json configuration wildcard option), so they comply with most os filename restrictions.
+
+* Samples
+  - [skinning] Adds a new sample to explain skinning matrices setup.
+
+* Build pipeline
+  - Enables c++11 feature by default for all targets.
+
+* Library
+  - [animation] Removes skeleton_utils.h IterateMemFun helper that can be replaced by std::bind.
+  - [base] Removes ozz::memory::Allocator::Reallocate() function as it's rarely used and complex to overload.
+  - [base] Replaces OZZ_NEW and OZZ_DELETE macros with template functions ozz::New and ozz::Delete.
+  - [base] Removes ScopedPtr in favor of an alias to standard unique_ptr that remaps to ozz deallocator. Implements make_unique using ozz allocator.
+  - [base] Uses template aliasing (using keyword) to redirect ozz to std containers. This allows to get rid of ::Std when using ozz containers.
+  - [base] Renames all aliased ozz containers to their original std name: vector, map etc... 
+  - [base] Renames ozz::Range to ozz::span, ozz::make_range to ozz::make_span to comply with std containers. Range count() and size() methods are renamed to size() and size_bytes() respectively, so this needs special attention to avoid mistakes.
+  - [base] Replaces OZZ_ALIGN_OF and OZZ_ALIGN by standard alignof and alignas keywords.
+  - [base] Replaces OZZ_STATIC_ASSERT by standard static_assert keyword.
+
+Release version 0.12.1
+----------------------
+
+* Library
+  - [base] Fixes memory overwrite when reallocating a buffer of smaller size using ozz default memory allocator.
+
+Release version 0.12.0
+----------------------
+
+* Library
+  - [offline] Simplified AnimationOptimizer settings to a single tolerance and distance. Tolerance is the maximum error that an optimization is allowed to generate on a whole joint hierarchy, while the other parameter is the distance (from the joint) at which error is measured. This second parameter allows to emulate effect on skinning or a long object (sword) attached to a joint (hand).
+  - [offline] Adds options to AnimationOptimizer to override optimization settings for a joint. This implicitly have an effect on the whole chain, up to that joint. This allows for example to have aggressive optimization for a whole skeleton, except for the chain that leads to the hand if user wants it to be precise.
+  - [offline] Switches AnimationOptimizer and TrackOptimizer to Ramer–Douglas–Peucker decimation algorithm which delivers better precision than original one. It also ensures that first and last points are preserved, avoiding visual issues for looping animations.
+  - [offline] Changes order of parameters for IterateJointsDF so it's less error prone.
+  - [memory] Implements ScopedPtr smart pointer. ScopedPtr implementation guarantees the pointed object will be deleted, either on destruction of the ScopedPtr, or via an explicit reset / reassignation.
+  - [math] Quaternion compare function now takes cosine of half angle as argument, to avoid computing arc cosine for every comparison as the tolerance is usually constant.
+  - [base] Replaces ozz::memory::Allocator New and Delete function with OZZ_NEW and OZZ_DELETE macros, in order to provide an interface that supports any type and number of arguments (without requiring c++11).
+  - [base] #83 Allows user code to disable definition of global namespace sse \_m128 +-/* operators, as they might conflict with other sse math libraries.
+
+* Samples
+  - [optimize] Exposes joint setting overriding option (from AnimationOptimizer) to sample gui. Displays median and maximum error values.
+
+* Tools
+  - Moves keyframe reduction stage for additive animations before computing delta with reference pose. This ensures whole skeleton hierarchy is known before decimating keyframes.
+
+Release version 0.11.0
+----------------------
+
+* Library
+  - [animation] Adds two-bone and aim inverse kinematic solvers. They can be used at runtime to procedurally affect joint local-space transforms.
+  - [animation] Allows resizing SamplingCache, meaning the can be allocated without knowing the number of joints the cache needs to support.
+  - [animation] Allow ozz::animation::LocalToModelJob to partially update a hierarchy, aka all children of a joint. This is useful when changes to a local-space pose has been limited to part of the joint hierarchy, like when applying IK or modifying model-space matrices independently from local-space transform.
+  - [animation] Changes ozz::animation::Skeleton joints from breadth-first to depth-first. This change breaks compatibility of previous ozz::animation::offline::RawAnimation, ozz::animation::Animation and ozz::animation::Skeleton archives.
+  - [animation] Renames track_triggering_job_stl.h to track_triggering_job_trait.h.
+  - [offline] #62 Adds an a way to specify additive animation reference pose to ozz::animation::offline::AdditiveAnimationBuilder.
+  - [memory] Removes (too error prone) ozz::memory::Allocator typed allocation functions.
+  - [math] Changes all conversion from AxisAngle to use separate arguments for axis and angle. This is more in line with function use cases.
+  - [math] Adds quaternions initialization from two vectors.
+  - [simd math] Updates simd math functions to prevent unnecessary operations. Some functions now return undefined values for some components, like Dot3 that will return the dot value in x and undefined values for x, y, z. See [simd_math.h](include/ozz/base/maths/simd_math.h) for each function documentation.
+  - [simd math] Implements AVX and FMA optimizations (when enabled at compile time).
+  - [simd math] Implements simd quaternions, making it easier and more efficient to use quaternion with other simd math code.
+  - [simd math] Exposes swizzling operations.
+
+* Samples
+  - [two bone ik] Adds two-bone ik sample, showing how ozz::animation::IKTwoBoneJob can be used on a robot arm.
+  - [look at] Adds a look-at sample, using ozz::animation::IKAimJob on a chain of bones to distribute aiming contribution to more than a single joint.
+  - [foot_ik] Adds foot-ik sample, which corrects character legs and ankles procedurally at runtime, as well as character/pelvis height, so that the feet can touch and adapt to the ground.
+
+* Build pipeline
+  - Adds support for fbx sdk 2019. This version is now mandatory for vs2017 builds.
+  - Adds support to macos 10.14 Mojave and Xcode 10.0.
+
+* Tools
+  - Adds point and vector property types (used to import tracks). These two types are actually float3 types, with scene axis and unit conversion applied.
+  - Adds an option to importer tools to select additive animation reference pose.
+
+* Build pipeline
+  - #40 Adds ozz_build_postfix option.
+  - #41 Adds ozz_build_tools option.
+
+Release version 0.10.0
+----------------------
+
+* Library
+  - [animation] Adds user-channel feature #4. ozz now offers tracks of float, float2, float3, float4 and quaternion for both raw/offline and runtime. A track can be used to store animated user-data, aka data that aren't joint transformations. Runtime jobs allow to query a track value for any time t (ozz::animation::TrackSamplingJob), or to find all rising and falling edges that happened during a period of time (ozz::animation::TrackTriggeringJob). Utilities allow to optimize a raw track (ozz::animation::offline::TrackOptimizer) and build a runtime track (ozz::animation::offline::TrackOptimizer). fbx2ozz comes with the ability to import tracks from fbx node properties.
+  - [animation] Changed ozz::animation::SamplingJob::time (in interval [0,duration]) to a ratio (in unit interval [0,1]). This is a breaking change, aiming to unify sampling of animations and tracks. To conform with this change, sampling time should simply be divided by animation duration. ozz::sample:AnimationController has been updated accordingly. Offline animations and tools aren't impacted.
+  - [base] Changes non-intrusive serialization mechanism to use a specialize template struct "Extern" instead of function overloading.
+
+* Tools
+  - Merged \*2skel and \*2anim in a single tool (\*2ozz, fbx2ozz for fbx importer) where all options are specified as a json config file. List of options with default values are available in [src/animation/offline/tools/reference.json](src/animation/offline/tools/reference.json) file. Consequently, ozz_animation_offline_skel_tools and ozz_animation_offline_anim_tools are also merged into a single ozz_animation_tools library.
+  - Adds options to import user-channel tracks (from node properties for fbx) using json "animations[].tracks[].properties[]" definition.
+  - Adds an option while importing skeletons to choose scene node types that must be considered as skeleton joints, ie not restricting to scene joints only. This is useful for the baked sample for example, which animates mesh nodes.
+
+* Build pipeline
+  - ozz optionnaly supports c++11 compiler.
+  - Adds ozz_build_data option (OFF by default), to avoid building data on every code change. Building data takes time indeed, and isn't required on every change. It should be turned ON when output format changes to update all data again.
+  - Removes fused source files from the depot. Fused files are generated during build to ${PROJECT_BINARY_DIR}/src_fused/ folder. To generate fused source files without building the whole project, then build BUILD_FUSE_ALL target with "cmake --build . --target BUILD_FUSE_ALL" command.
+  - Adds support for Visual Studio 15 2017, drops Visual Studio 11 2012.
+
+* Samples
+  - [user_channel] Adds new user-channel sample, demonstrating usage of user-channel tracks API and import pipeline usage.
+  - [sample_fbx2mesh] Remaps joint indices to the smaller range of skeleton joints that are actually used by the skinning. It's now required to index skeleton matrices using ozz::sample::framework:Mesh::joint_remaps when build skinning matrices.
+  - [multithread] Switched from OpenMP to c++11 std::async API to implement a parallel-for loop over all computation tasks.
+  
+Release version 0.9.1
+---------------------
+
+* Build pipeline
+  - Allows to use ozz-animation from another project using cmake add_subdirectory() command, conforming with [online documentation](http://guillaumeblanc.github.io/ozz-animation/documentation/build/).
+  - Adds Travis-CI (http://travis-ci.org/guillaumeblanc/ozz-animation) and AppVeyor (http://ci.appveyor.com/project/guillaumeblanc/ozz-animation) continuous integration support.
+  - Exposes MSVC /MD and /MT option (ozz_build_msvc_rt_dll). Default is /MD, same as MSVC/cmake.
+  - Adds support for Xcode 8.3.2 (fbx specific compilation option).
+
 Release version 0.9.0
 ---------------------
 
@@ -135,7 +252,7 @@ Release version 0.4.0
 
 * Library
   - [offline] Adds Fbx import pipeline, through fbx2skel and fbx2anim command line tools.
-  - [offline] Adds Fbx import and conversion library, through ozz_animation_offline_fbx. Building fbx related libraries requires fbx sdk to be installed.
+  - [offline] Adds Fbx import and conversion library, through ozz_animation_fbx. Building fbx related libraries requires fbx sdk to be installed.
   - [offline] Adds ozz_animation_offline_tools library to share the common work for Collada and Fbx import tools. This could be use to implement custom conversion command line tools.
 
 * Samples

@@ -3,7 +3,7 @@
 // ozz-animation is hosted at http://github.com/guillaumeblanc/ozz-animation  //
 // and distributed under the MIT License (MIT).                               //
 //                                                                            //
-// Copyright (c) 2015 Guillaume Blanc                                         //
+// Copyright (c) Guillaume Blanc                                              //
 //                                                                            //
 // Permission is hereby granted, free of charge, to any person obtaining a    //
 // copy of this software and associated documentation files (the "Software"), //
@@ -95,7 +95,7 @@ bool WriteTGA(const char* _filename, int _width, int _height,
       static_cast<uint8_t>((_height >> 8) & 0xff),
       static_cast<uint8_t>(_write_alpha ? 32 : 24),  // Pixel depth
       0};                                            // Image descriptor
-  OZZ_STATIC_ASSERT(sizeof(header) == 18);
+  static_assert(sizeof(header) == 18, "Expects 18 bytes structure.");
   file.Write(header, sizeof(header));
 
   // Early out if no pixel to write.
@@ -111,8 +111,9 @@ bool WriteTGA(const char* _filename, int _width, int _height,
   const uint8_t* mapping = mappings[_src_format];
 
   // Allocates enough space to store RLE packets for the worst case scenario.
-  uint8_t* dest_buffer = ozz::memory::default_allocator()->Allocate<uint8_t>(
-      (1 + (_write_alpha ? 4 : 3)) * _width * _height);
+  uint8_t* dest_buffer =
+      reinterpret_cast<uint8_t*>(ozz::memory::default_allocator()->Allocate(
+          (1 + (_write_alpha ? 4 : 3)) * _width * _height, 4));
 
   size_t dest_size = 0;
   if (HasAlpha(_src_format)) {
@@ -216,6 +217,6 @@ bool WriteTGA(const char* _filename, int _width, int _height,
 }
 #undef PUSH_PIXEL_RGB
 #undef PUSH_PIXEL_RGBA
-}  // image
-}  // sample
-}  // ozz
+}  // namespace image
+}  // namespace sample
+}  // namespace ozz

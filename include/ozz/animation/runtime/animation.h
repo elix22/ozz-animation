@@ -3,7 +3,7 @@
 // ozz-animation is hosted at http://github.com/guillaumeblanc/ozz-animation  //
 // and distributed under the MIT License (MIT).                               //
 //                                                                            //
-// Copyright (c) 2015 Guillaume Blanc                                         //
+// Copyright (c) Guillaume Blanc                                              //
 //                                                                            //
 // Permission is hereby granted, free of charge, to any person obtaining a    //
 // copy of this software and associated documentation files (the "Software"), //
@@ -30,12 +30,13 @@
 
 #include "ozz/base/io/archive_traits.h"
 #include "ozz/base/platform.h"
+#include "ozz/base/span.h"
 
 namespace ozz {
 namespace io {
 class IArchive;
 class OArchive;
-}
+}  // namespace io
 namespace animation {
 
 // Forward declares the AnimationBuilder, used to instantiate an Animation.
@@ -44,9 +45,8 @@ class AnimationBuilder;
 }
 
 // Forward declaration of key frame's type.
-struct TranslationKey;
-struct RotationKey;
-struct ScaleKey;
+struct Float3Key;
+struct QuaternionKey;
 
 // Defines a runtime skeletal animation clip.
 // The runtime animation data structure stores animation keyframes, for all the
@@ -80,15 +80,15 @@ class Animation {
   const char* name() const { return name_ ? name_ : ""; }
 
   // Gets the buffer of translations keys.
-  ozz::Range<const TranslationKey> translations() const {
+  span<const Float3Key> translations() const {
     return translations_;
   }
 
   // Gets the buffer of rotation keys.
-  ozz::Range<const RotationKey> rotations() const { return rotations_; }
+  span<const QuaternionKey> rotations() const { return rotations_; }
 
   // Gets the buffer of scale keys.
-  ozz::Range<const ScaleKey> scales() const { return scales_; }
+  span<const Float3Key> scales() const { return scales_; }
 
   // Get the estimated animation's size in bytes.
   size_t size() const;
@@ -123,15 +123,15 @@ class Animation {
   char* name_;
 
   // Stores all translation/rotation/scale keys begin and end of buffers.
-  ozz::Range<TranslationKey> translations_;
-  ozz::Range<RotationKey> rotations_;
-  ozz::Range<ScaleKey> scales_;
+  span<Float3Key> translations_;
+  span<QuaternionKey> rotations_;
+  span<Float3Key> scales_;
 };
-}  // animation
+}  // namespace animation
 
 namespace io {
-OZZ_IO_TYPE_VERSION(4, animation::Animation)
+OZZ_IO_TYPE_VERSION(6, animation::Animation)
 OZZ_IO_TYPE_TAG("ozz-animation", animation::Animation)
-}  // io
-}  // ozz
+}  // namespace io
+}  // namespace ozz
 #endif  // OZZ_OZZ_ANIMATION_RUNTIME_ANIMATION_H_

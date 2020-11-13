@@ -3,7 +3,7 @@
 // ozz-animation is hosted at http://github.com/guillaumeblanc/ozz-animation  //
 // and distributed under the MIT License (MIT).                               //
 //                                                                            //
-// Copyright (c) 2015 Guillaume Blanc                                         //
+// Copyright (c) Guillaume Blanc                                              //
 //                                                                            //
 // Permission is hereby granted, free of charge, to any person obtaining a    //
 // copy of this software and associated documentation files (the "Software"), //
@@ -75,8 +75,14 @@ class Stream {
   virtual size_t Size() const = 0;
 
  protected:
+  Stream() {}
+
   // Required virtual destructor.
   virtual ~Stream() {}
+
+ private:
+  Stream(const Stream&);
+  void operator=(const Stream&);
 };
 
 // Implements Stream of type File.
@@ -93,7 +99,7 @@ class File : public Stream {
   File(const char* _filename, const char* _mode);
 
   // Gives _file ownership to the FileStream, which will be in charge of closing
-  // it. _file must be NULL or a valid std::FILE pointer.
+  // it. _file must be nullptr or a valid std::FILE pointer.
   explicit File(void* _file);
 
   // Close the file if it is opened.
@@ -178,6 +184,6 @@ class MemoryStream : public Stream {
   // The cursor position in the buffer of data.
   int tell_;
 };
-}  // io
-}  // ozz
+}  // namespace io
+}  // namespace ozz
 #endif  // OZZ_OZZ_BASE_IO_STREAM_H_

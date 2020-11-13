@@ -3,7 +3,7 @@
 // ozz-animation is hosted at http://github.com/guillaumeblanc/ozz-animation  //
 // and distributed under the MIT License (MIT).                               //
 //                                                                            //
-// Copyright (c) 2015 Guillaume Blanc                                         //
+// Copyright (c) Guillaume Blanc                                              //
 //                                                                            //
 // Permission is hereby granted, free of charge, to any person obtaining a    //
 // copy of this software and associated documentation files (the "Software"), //
@@ -118,7 +118,7 @@ ImGuiImpl::ImGuiImpl()
       active_item_(0),
       auto_gen_id_(0),
       glyph_texture_(0),
-      renderer_(NULL) {
+      renderer_(nullptr) {
   InitializeCircle();
   InitalizeFont();
 }
@@ -200,7 +200,7 @@ void ImGuiImpl::EndFrame() {
   GL(Disable(GL_BLEND));
 
   // Release renderer.
-  renderer_ = NULL;
+  renderer_ = nullptr;
 }
 
 bool ImGuiImpl::AddWidget(float _height, math::RectFloat* _rect) {
@@ -323,12 +323,14 @@ void ImGuiImpl::BeginContainer(const char* _title, const math::RectFloat* _rect,
                                    container.rect.bottom + container.offset_y,
                                    container.rect.width, header_height);
 
+  // Don't display any arrow if _open is nullptr.
+  const float arrow_size = _open != nullptr ? kWidgetHeight : 0;
   const math::RectFloat open_close_rect(title_rect.left, title_rect.bottom,
-                                        kWidgetHeight, kWidgetHeight);
+                                        arrow_size, kWidgetHeight);
 
   const math::RectFloat label_rect(
-      title_rect.left + kWidgetHeight + kTextMarginX, title_rect.bottom,
-      title_rect.width - kWidgetHeight - kTextMarginX, kWidgetHeight);
+      title_rect.left + arrow_size + kTextMarginX, title_rect.bottom,
+      title_rect.width - arrow_size - kTextMarginX, kWidgetHeight);
 
   // Adds a margin before the next widget only if it is opened.
   if (!_open || *_open) {
@@ -629,6 +631,17 @@ bool ImGuiImpl::DoRadioButton(int _ref, const char* _label, int* _value,
   return clicked;
 }
 
+namespace {
+float FindMax(float _value) {
+  if (_value == 0.f) {
+    return 0.f;
+  }
+  const float mexp = floor(log10(_value));
+  const float mpow = pow(10.f, mexp);
+  return ceil(_value / mpow) * 1.5f * mpow;
+}
+}  // namespace
+
 void ImGuiImpl::DoGraph(const char* _label, float _min, float _max, float _mean,
                         const float* _value_cursor, const float* _value_begin,
                         const float* _value_end) {
@@ -690,7 +703,10 @@ void ImGuiImpl::DoGraph(const char* _label, float _min, float _max, float _mean,
   if (_value_end - _value_begin >= 2) {  // Reject invalid or to small inputs.
     const float abscissa_min = graph_rect.bottom + 1.f;
     const float abscissa_max = graph_rect.top() - 1.f;
-    const float abscissa_scale = (abscissa_max - abscissa_min) / (_max - _min);
+    // Computes a new max value, rounded up to be more stable.
+    const float graph_max = FindMax(_max);
+    const float abscissa_scale =
+        (abscissa_max - abscissa_min) / (graph_max - _min);
     const float abscissa_begin = graph_rect.bottom + 1.f;
     const float ordinate_inc =
         -(graph_rect.width - 2.f) / (_value_end - _value_begin - 1.f);
@@ -1170,8 +1186,8 @@ void ImGuiImpl::InitalizeFont() {
          font_.pixels_size * 8);
 
   const size_t buffer_size = 4 * font_.texture_width * font_.texture_height;
-  unsigned char* pixels =
-      memory::default_allocator()->Allocate<unsigned char>(buffer_size);
+  uint8_t* pixels = reinterpret_cast<uint8_t*>(
+      memory::default_allocator()->Allocate(buffer_size, 4));
   memset(pixels, 0, buffer_size);
 
   // Unpack font data font 1 bit per pixel to 8.
@@ -1180,7 +1196,7 @@ void ImGuiImpl::InitalizeFont() {
       const int pixel = (i + j) / font_.image_width * font_.texture_width +
                         (i + j) % font_.image_width;
       const int bit = 7 - j;
-      const char cpnt = ((font_.pixels[i / 8] >> bit) & 1) * 255;
+      const uint8_t cpnt = ((font_.pixels[i / 8] >> bit) & 1) * 255;
       pixels[4 * pixel + 0] = cpnt;
       pixels[4 * pixel + 1] = cpnt;
       pixels[4 * pixel + 2] = cpnt;
@@ -1247,7 +1263,7 @@ struct LineSpec {
   const char* begin;
   const char* end;
 };
-}
+}  // namespace
 
 float ImGuiImpl::Print(const char* _text, const math::RectFloat& _rect,
                        PrintLayout _layout, const GLubyte _rgba[4]) const {
@@ -1266,20 +1282,19 @@ float ImGuiImpl::Print(const char* _text, const math::RectFloat& _rect,
 
   const int chars_per_line = static_cast<int>(_rect.width) / font_.glyph_width;
   {
-    const char* last_div = NULL;
+    const char* last_div = nullptr;
     LineSpec spec = {_text, _text};
     while (*spec.end) {
       if (IsDivisible(*spec.end)) {  // Found a divisible character.
         last_div = spec.end;
       }
-      ++spec.end;
 
       // Is this the last character of the line.
       if (*spec.end == '\n' || spec.end + 1 > spec.begin + chars_per_line) {
-        if (*spec.end != '\n' && last_div != NULL) {
+        if (*spec.end != '\n' && last_div != nullptr) {
           // Breaks the line after the last divisible character.
           spec.end = last_div;
-          last_div = NULL;
+          last_div = nullptr;
         }
 
         // Trims ' ' left if it is the end of the new line.
@@ -1306,6 +1321,8 @@ float ImGuiImpl::Print(const char* _text, const math::RectFloat& _rect,
         }
 
         spec.end = spec.begin;
+      } else {
+        ++spec.end;
       }
     }
 
@@ -1407,6 +1424,6 @@ float ImGuiImpl::Print(const char* _text, const math::RectFloat& _rect,
   // Returns the bottom of the last line.
   return ly + font_.glyph_height + interlign - _rect.bottom;
 }
-}  // internal
-}  // sample
-}  // ozz
+}  // namespace internal
+}  // namespace sample
+}  // namespace ozz

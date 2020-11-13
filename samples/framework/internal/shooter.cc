@@ -3,7 +3,7 @@
 // ozz-animation is hosted at http://github.com/guillaumeblanc/ozz-animation  //
 // and distributed under the MIT License (MIT).                               //
 //                                                                            //
-// Copyright (c) 2015 Guillaume Blanc                                         //
+// Copyright (c) Guillaume Blanc                                              //
 //                                                                            //
 // Permission is hereby granted, free of charge, to any person obtaining a    //
 // copy of this software and associated documentation files (the "Software"), //
@@ -43,7 +43,12 @@ Shooter::Shooter()
       image_format_(image::Format::kRGBA),
       shot_number_(0) {
   // Test required extension (optional for the framework).
-  supported_ = glMapBuffer != NULL && glUnmapBuffer != NULL;
+  // If GL_VERSION_1_5 is defined (aka OZZ_GL_VERSION_1_5_EXT not defined), then
+  // these functions are part of the library (don't need extensions).
+  supported_ = true;
+#ifdef OZZ_GL_VERSION_1_5_EXT
+  supported_ &= glMapBuffer != nullptr && glUnmapBuffer != nullptr;
+#endif  // OZZ_GL_VERSION_1_5_EXT
 
   // Initializes shots
   GLuint pbos[kNumShots];
@@ -112,6 +117,7 @@ void Shooter::Resize(int _width, int _height) {
   ProcessAll();
 
   // Resizes all pbos.
+#ifndef EMSCRIPTEN
   for (int i = 0; i < kNumShots; ++i) {
     Shot& shot = shots_[i];
     GL(BindBuffer(GL_PIXEL_PACK_BUFFER, shot.pbo));
@@ -122,6 +128,7 @@ void Shooter::Resize(int _width, int _height) {
     assert(shot.cooldown == 0);  // Must have been processed.
   }
   GL(BindBuffer(GL_PIXEL_PACK_BUFFER, 0));
+#endif  // EMSCRIPTEN
 }
 
 bool Shooter::Update() { return Process(); }
@@ -147,6 +154,9 @@ bool Shooter::Process() {
     }
 
     // Processes this shot.
+#ifdef EMSCRIPTEN
+    (void)shot_number_;
+#else   // EMSCRIPTEN
     GL(BindBuffer(GL_PIXEL_PACK_BUFFER, shot.pbo));
     const void* pixels = glMapBuffer(GL_PIXEL_PACK_BUFFER, GL_READ_ONLY);
     if (pixels) {
@@ -159,6 +169,7 @@ bool Shooter::Process() {
       GL(UnmapBuffer(GL_PIXEL_PACK_BUFFER));
     }
     GL(BindBuffer(GL_PIXEL_PACK_BUFFER, 0));
+#endif  // EMSCRIPTEN
   }
   return true;
 }
@@ -204,6 +215,6 @@ bool Shooter::Capture(int _buffer) {
 
   return true;
 }
-}  // internal
-}  // sample
-}  // ozz
+}  // namespace internal
+}  // namespace sample
+}  // namespace ozz

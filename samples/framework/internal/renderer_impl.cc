@@ -3,7 +3,7 @@
 // ozz-animation is hosted at http://github.com/guillaumeblanc/ozz-animation  //
 // and distributed under the MIT License (MIT).                               //
 //                                                                            //
-// Copyright (c) 2015 Guillaume Blanc                                         //
+// Copyright (c) Guillaume Blanc                                              //
 //                                                                            //
 // Permission is hereby granted, free of charge, to any person obtaining a    //
 // copy of this software and associated documentation files (the "Software"), //
@@ -29,26 +29,21 @@
 
 #include "renderer_impl.h"
 
+#include "camera.h"
+#include "framework/mesh.h"
+#include "icosphere.h"
+#include "immediate.h"
 #include "ozz/animation/runtime/local_to_model_job.h"
 #include "ozz/animation/runtime/skeleton.h"
-
-#include "ozz/geometry/runtime/skinning_job.h"
-
+#include "ozz/animation/runtime/skeleton_utils.h"
 #include "ozz/base/log.h"
-
-#include "ozz/base/platform.h"
-
 #include "ozz/base/maths/box.h"
 #include "ozz/base/maths/math_ex.h"
 #include "ozz/base/maths/simd_math.h"
 #include "ozz/base/maths/vec_float.h"
-
 #include "ozz/base/memory/allocator.h"
-
-#include "framework/mesh.h"
-
-#include "camera.h"
-#include "immediate.h"
+#include "ozz/base/platform.h"
+#include "ozz/geometry/runtime/skinning_job.h"
 #include "shader.h"
 
 namespace ozz {
@@ -60,21 +55,16 @@ namespace {
 struct VertexPNC {
   math::Float3 pos;
   math::Float3 normal;
-  Renderer::Color color;
+  Color color;
 };
 }  // namespace
 
-RendererImpl::Model::Model()
-    : vbo(0), mode(GL_POINTS), count(0), shader(NULL) {}
+RendererImpl::Model::Model() : vbo(0), mode(GL_POINTS), count(0) {}
 
 RendererImpl::Model::~Model() {
   if (vbo) {
     GL(DeleteBuffers(1, &vbo));
     vbo = 0;
-  }
-  if (shader) {
-    memory::default_allocator()->Delete(shader);
-    shader = NULL;
   }
 }
 
@@ -82,17 +72,9 @@ RendererImpl::RendererImpl(Camera* _camera)
     : camera_(_camera),
       dynamic_array_bo_(0),
       dynamic_index_bo_(0),
-      immediate_(NULL),
-      ambient_shader(NULL),
-      ambient_textured_shader(NULL),
-      ambient_shader_instanced(NULL),
       checkered_texture_(0) {}
 
 RendererImpl::~RendererImpl() {
-  memory::Allocator* allocator = memory::default_allocator();
-
-  allocator->Deallocate(prealloc_models_);
-
   if (dynamic_array_bo_) {
     GL(DeleteBuffers(1, &dynamic_array_bo_));
     dynamic_array_bo_ = 0;
@@ -102,18 +84,6 @@ RendererImpl::~RendererImpl() {
     GL(DeleteBuffers(1, &dynamic_index_bo_));
     dynamic_index_bo_ = 0;
   }
-
-  allocator->Delete(immediate_);
-  immediate_ = NULL;
-
-  allocator->Delete(ambient_shader);
-  ambient_shader = NULL;
-
-  allocator->Delete(ambient_textured_shader);
-  ambient_textured_shader = NULL;
-
-  allocator->Delete(ambient_shader_instanced);
-  ambient_shader_instanced = NULL;
 
   if (checkered_texture_) {
     GL(DeleteTextures(1, &checkered_texture_));
@@ -137,7 +107,7 @@ bool RendererImpl::Initialize() {
   GL(GenBuffers(1, &dynamic_index_bo_));
 
   // Allocate immediate mode renderer;
-  immediate_ = memory::default_allocator()->New<GlImmediateRenderer>(this);
+  immediate_ = make_unique<GlImmediateRenderer>(this);
   if (!immediate_->Initialize()) {
     return false;
   }
@@ -155,7 +125,7 @@ bool RendererImpl::Initialize() {
   }
 
   // Instantiate instanced ambient rendering shader.
-  if (GL_ARB_instanced_arrays) {
+  if (GL_ARB_instanced_arrays_supported) {
     ambient_shader_instanced = AmbientShaderInstanced::Build();
     if (!ambient_shader_instanced) {
       return false;
@@ -165,7 +135,7 @@ bool RendererImpl::Initialize() {
   return true;
 }
 
-void RendererImpl::DrawAxes(const ozz::math::Float4x4& _transform) {
+bool RendererImpl::DrawAxes(const ozz::math::Float4x4& _transform) {
   GlImmediatePC im(immediate_renderer(), GL_LINES, _transform);
   GlImmediatePC::Vertex v = {{0.f, 0.f, 0.f}, {0, 0, 0, 0xff}};
 
@@ -201,9 +171,11 @@ void RendererImpl::DrawAxes(const ozz::math::Float4x4& _transform) {
   im.PushVertex(v);
   v.pos[2] = 1.f;
   im.PushVertex(v);
+
+  return true;
 }
 
-void RendererImpl::DrawGrid(int _cell_count, float _cell_size) {
+bool RendererImpl::DrawGrid(int _cell_count, float _cell_size) {
   const float extent = _cell_count * _cell_size;
   const float half_extent = extent * 0.5f;
   const ozz::math::Float3 corner(-half_extent, 0, -half_extent);
@@ -263,6 +235,8 @@ void RendererImpl::DrawGrid(int _cell_count, float _cell_size) {
   }
 
   GL(DepthMask(GL_TRUE));
+
+  return true;
 }
 
 // Computes the model space bind pose and renders it.
@@ -277,26 +251,19 @@ bool RendererImpl::DrawSkeleton(const ozz::animation::Skeleton& _skeleton,
   }
 
   // Reallocate matrix array if necessary.
-  if (prealloc_models_.Size() < num_joints * sizeof(ozz::math::Float4x4)) {
-    ozz::memory::Allocator* allocator = ozz::memory::default_allocator();
-    prealloc_models_ =
-        allocator->AllocateRange<ozz::math::Float4x4>(_skeleton.num_joints());
-  }
-  if (!prealloc_models_.begin) {
-    return false;
-  }
+  prealloc_models_.resize(num_joints);
 
   // Compute model space bind pose.
   ozz::animation::LocalToModelJob job;
-  job.input = _skeleton.bind_pose();
-  job.output = prealloc_models_;
+  job.input = _skeleton.joint_bind_poses();
+  job.output = make_span(prealloc_models_);
   job.skeleton = &_skeleton;
   if (!job.Run()) {
     return false;
   }
 
   // Forwards to rendering.
-  return DrawPosture(_skeleton, prealloc_models_, _transform, _draw_joints);
+  return DrawPosture(_skeleton, job.output, _transform, _draw_joints);
 }
 
 bool RendererImpl::InitPostureRendering() {
@@ -421,7 +388,8 @@ bool RendererImpl::InitCheckeredTexture() {
 
   // Allocates for biggest mip level.
   const size_t buffer_size = 3 * kWidth * kWidth;
-  uint8_t* pixels = memory::default_allocator()->Allocate<uint8_t>(buffer_size);
+  uint8_t* pixels = reinterpret_cast<uint8_t*>(
+      memory::default_allocator()->Allocate(buffer_size, 16));
 
   // Create the checkered pattern on all mip levels.
   int level_width = kWidth;
@@ -469,26 +437,25 @@ bool RendererImpl::InitCheckeredTexture() {
 
 namespace {
 int DrawPosture_FillUniforms(const ozz::animation::Skeleton& _skeleton,
-                             ozz::Range<const ozz::math::Float4x4> _matrices,
+                             ozz::span<const ozz::math::Float4x4> _matrices,
                              float* _uniforms, int _max_instances) {
-  assert(math::IsAligned(_uniforms, OZZ_ALIGN_OF(math::SimdFloat4)));
+  assert(IsAligned(_uniforms, alignof(math::SimdFloat4)));
 
   // Prepares computation constants.
   const int num_joints = _skeleton.num_joints();
-  const ozz::animation::Skeleton::JointProperties* properties =
-      _skeleton.joint_properties().begin;
+  const span<const int16_t>& parents = _skeleton.joint_parents();
 
   int instances = 0;
   for (int i = 0; i < num_joints && instances < _max_instances; ++i) {
     // Root isn't rendered.
-    const int parent_id = properties[i].parent;
-    if (parent_id == ozz::animation::Skeleton::kNoParentIndex) {
+    const int16_t parent_id = parents[i];
+    if (parent_id == ozz::animation::Skeleton::kNoParent) {
       continue;
     }
 
     // Selects joint matrices.
-    const math::Float4x4& parent = _matrices.begin[parent_id];
-    const math::Float4x4& current = _matrices.begin[i];
+    const math::Float4x4& parent = _matrices[parent_id];
+    const math::Float4x4& current = _matrices[i];
 
     // Copy parent joint's raw matrix, to render a bone between the parent
     // and current matrix.
@@ -514,7 +481,7 @@ int DrawPosture_FillUniforms(const ozz::animation::Skeleton& _skeleton,
     uniform += 16;
 
     // Only the joint is rendered for leaves, the bone model isn't.
-    if (properties[i].is_leaf) {
+    if (IsLeaf(_skeleton, i)) {
       // Copy current joint's raw matrix.
       uniform = _uniforms + instances * 16;
       math::StorePtr(current.cols[0], uniform + 0);
@@ -594,10 +561,10 @@ void RendererImpl::DrawPosture_InstancedImpl(
     GL(EnableVertexAttribArray(joint_attrib + 1));
     GL(EnableVertexAttribArray(joint_attrib + 2));
     GL(EnableVertexAttribArray(joint_attrib + 3));
-    GL(VertexAttribDivisorARB(joint_attrib + 0, 1));
-    GL(VertexAttribDivisorARB(joint_attrib + 1, 1));
-    GL(VertexAttribDivisorARB(joint_attrib + 2, 1));
-    GL(VertexAttribDivisorARB(joint_attrib + 3, 1));
+    GL(VertexAttribDivisor_(joint_attrib + 0, 1));
+    GL(VertexAttribDivisor_(joint_attrib + 1, 1));
+    GL(VertexAttribDivisor_(joint_attrib + 2, 1));
+    GL(VertexAttribDivisor_(joint_attrib + 3, 1));
     GL(VertexAttribPointer(joint_attrib + 0, 4, GL_FLOAT, GL_FALSE,
                            sizeof(math::Float4x4), GL_PTR_OFFSET(0)));
     GL(VertexAttribPointer(joint_attrib + 1, 4, GL_FLOAT, GL_FALSE,
@@ -608,32 +575,29 @@ void RendererImpl::DrawPosture_InstancedImpl(
                            sizeof(math::Float4x4), GL_PTR_OFFSET(48)));
     GL(BindBuffer(GL_ARRAY_BUFFER, 0));
 
-    GL(DrawArraysInstancedARB(model.mode, 0, model.count, _instance_count));
+    GL(DrawArraysInstanced_(model.mode, 0, model.count, _instance_count));
 
     GL(DisableVertexAttribArray(joint_attrib + 0));
     GL(DisableVertexAttribArray(joint_attrib + 1));
     GL(DisableVertexAttribArray(joint_attrib + 2));
     GL(DisableVertexAttribArray(joint_attrib + 3));
-    GL(VertexAttribDivisorARB(joint_attrib + 0, 0));
-    GL(VertexAttribDivisorARB(joint_attrib + 1, 0));
-    GL(VertexAttribDivisorARB(joint_attrib + 2, 0));
-    GL(VertexAttribDivisorARB(joint_attrib + 3, 0));
+    GL(VertexAttribDivisor_(joint_attrib + 0, 0));
+    GL(VertexAttribDivisor_(joint_attrib + 1, 0));
+    GL(VertexAttribDivisor_(joint_attrib + 2, 0));
+    GL(VertexAttribDivisor_(joint_attrib + 3, 0));
 
     model.shader->Unbind();
   }
 }
 
-// Uses GL_ARB_instanced_arrays as a first choice to render the whole skeleton
-// in a single draw call.
-// Does a draw call per joint if no extension can help.
+// Uses GL_ARB_instanced_arrays_supported as a first choice to render the whole
+// skeleton in a single draw call. Does a draw call per joint if no extension
+// can help.
 bool RendererImpl::DrawPosture(const ozz::animation::Skeleton& _skeleton,
-                               ozz::Range<const ozz::math::Float4x4> _matrices,
+                               ozz::span<const ozz::math::Float4x4> _matrices,
                                const ozz::math::Float4x4& _transform,
                                bool _draw_joints) {
-  if (!_matrices.begin || !_matrices.end) {
-    return false;
-  }
-  if (_matrices.end - _matrices.begin < _skeleton.num_joints()) {
+  if (_matrices.size() < static_cast<size_t>(_skeleton.num_joints())) {
     return false;
   }
 
@@ -647,7 +611,7 @@ bool RendererImpl::DrawPosture(const ozz::animation::Skeleton& _skeleton,
       _skeleton, _matrices, uniforms, max_skeleton_pieces);
   assert(instance_count <= max_skeleton_pieces);
 
-  if (GL_ARB_instanced_arrays) {
+  if (GL_ARB_instanced_arrays_supported) {
     DrawPosture_InstancedImpl(_transform, uniforms, instance_count,
                               _draw_joints);
   } else {
@@ -769,9 +733,9 @@ bool RendererImpl::DrawBoxIm(const ozz::math::Box& _box,
 
 bool RendererImpl::DrawBoxShaded(
     const ozz::math::Box& _box,
-    ozz::Range<const ozz::math::Float4x4> _transforms, Color _color) {
+    ozz::span<const ozz::math::Float4x4> _transforms, Color _color) {
   // Early out if no instance to render.
-  if (_transforms.Size() == 0) {
+  if (_transforms.size() == 0) {
     return true;
   }
 
@@ -812,26 +776,26 @@ bool RendererImpl::DrawBoxShaded(
   const GLsizei normals_offset = positions_offset + sizeof(float) * 3;
   const GLsizei colors_offset = normals_offset + sizeof(float) * 3;
 
-  if (GL_ARB_instanced_arrays) {
+  if (GL_ARB_instanced_arrays_supported) {
     // Buffer object will contain vertices and model matrices.
-    const size_t bo_size = sizeof(vertices) + _transforms.Size();
+    const size_t bo_size = sizeof(vertices) + _transforms.size_bytes();
     GL(BindBuffer(GL_ARRAY_BUFFER, dynamic_array_bo_));
-    GL(BufferData(GL_ARRAY_BUFFER, bo_size, NULL, GL_STREAM_DRAW));
+    GL(BufferData(GL_ARRAY_BUFFER, bo_size, nullptr, GL_STREAM_DRAW));
 
     // Pushes vertices
     GL(BufferSubData(GL_ARRAY_BUFFER, 0, sizeof(vertices), vertices));
     // Pushes matrices
     const size_t models_offset = sizeof(vertices);
-    GL(BufferSubData(GL_ARRAY_BUFFER, models_offset, _transforms.Size(),
-                     _transforms.begin));
+    GL(BufferSubData(GL_ARRAY_BUFFER, models_offset, _transforms.size_bytes(),
+                     _transforms.data()));
 
     ambient_shader_instanced->Bind(models_offset, camera()->view_proj(), stride,
                                    positions_offset, stride, normals_offset,
                                    stride, colors_offset);
     GL(BindBuffer(GL_ARRAY_BUFFER, 0));
 
-    GL(DrawArraysInstancedARB(GL_TRIANGLES, 0, OZZ_ARRAY_SIZE(vertices),
-                              static_cast<GLsizei>(_transforms.Count())));
+    GL(DrawArraysInstanced_(GL_TRIANGLES, 0, OZZ_ARRAY_SIZE(vertices),
+                            static_cast<GLsizei>(_transforms.size())));
 
     // Unbinds.
     ambient_shader_instanced->Unbind();
@@ -840,7 +804,7 @@ bool RendererImpl::DrawBoxShaded(
     GL(BindBuffer(GL_ARRAY_BUFFER, dynamic_array_bo_));
     GL(BufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STREAM_DRAW));
 
-    for (size_t i = 0; i < _transforms.Count(); i++) {
+    for (size_t i = 0; i < _transforms.size(); i++) {
       const ozz::math::Float4x4& transform = _transforms[i];
 
       ambient_shader->Bind(transform, camera()->view_proj(), stride,
@@ -859,17 +823,148 @@ bool RendererImpl::DrawBoxShaded(
   return true;
 }
 
-bool RendererImpl::DrawVectors(ozz::Range<const float> _positions,
+// Renders a sphere at a specified location.
+bool RendererImpl::DrawSphereIm(float _radius,
+                                const ozz::math::Float4x4& _transform,
+                                const Color _color) {
+  {  // Filled boxed
+    const ozz::math::Float4x4& transform =
+        Scale(_transform,
+              ozz::math::simd_float4::Load(_radius, _radius, _radius, 1.f));
+    GlImmediatePC im(immediate_renderer(), GL_TRIANGLES, transform);
+    GlImmediatePC::Vertex v = {{0, 0, 0},
+                               {_color.r, _color.g, _color.b, _color.a}};
+
+    for (int i = 0; i < icosphere::kNumIndices; ++i) {
+      const uint16_t vi = icosphere::kIndices[i];
+      v.pos[0] = icosphere::kVertices[vi * 3 + 0];
+      v.pos[1] = icosphere::kVertices[vi * 3 + 1];
+      v.pos[2] = icosphere::kVertices[vi * 3 + 2];
+      im.PushVertex(v);
+    }
+  }
+  return true;
+}
+
+// Renders shaded spheres at specified locations.
+bool RendererImpl::DrawSphereShaded(
+    float _radius, ozz::span<const ozz::math::Float4x4> _transforms,
+    Color _color) {
+  // Early out if no instance to render.
+  if (_transforms.size() == 0) {
+    return true;
+  }
+
+  ozz::math::SimdFloat4 radius =
+      ozz::math::simd_float4::Load(_radius, _radius, _radius, 1.f);
+
+  // Setup indices
+  GL(BindBuffer(GL_ELEMENT_ARRAY_BUFFER, dynamic_index_bo_));
+  GL(BufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(icosphere::kIndices),
+                icosphere::kIndices, GL_STREAM_DRAW));
+
+  // Vertices
+  const GLsizei positions_offset = 0;
+  const GLsizei positions_stride = sizeof(float) * 3;
+  const GLsizei normals_offset =
+      positions_offset;  // Normals and positions are the same.
+  const GLsizei normals_stride = positions_stride;
+  const GLsizei colors_offset = sizeof(icosphere::kVertices);
+
+  if (GL_ARB_instanced_arrays_supported) {
+    const GLsizei colors_stride = 0;
+    const GLsizei colors_size = sizeof(uint8_t) * 4;
+    const GLsizei models_offset = sizeof(icosphere::kVertices) + colors_size;
+    const GLsizei bo_size =
+        models_offset + static_cast<GLsizei>(_transforms.size_bytes());
+
+    GL(BindBuffer(GL_ARRAY_BUFFER, dynamic_array_bo_));
+    GL(BufferData(GL_ARRAY_BUFFER, bo_size, nullptr, GL_STREAM_DRAW));
+    GL(BufferSubData(GL_ARRAY_BUFFER, positions_offset,
+                     sizeof(icosphere::kVertices), icosphere::kVertices));
+    GL(BufferSubData(GL_ARRAY_BUFFER, colors_offset, colors_size, &_color));
+
+    ozz::math::Float4x4* models = static_cast<ozz::math::Float4x4*>(
+        scratch_buffer_.Resize(_transforms.size_bytes()));
+    for (size_t i = 0; i < _transforms.size(); ++i) {
+      models[i] = Scale(_transforms[i], radius);
+    }
+    GL(BufferSubData(GL_ARRAY_BUFFER, models_offset, _transforms.size_bytes(),
+                     models));
+
+    ambient_shader_instanced->Bind(models_offset, camera()->view_proj(),
+                                   positions_stride, positions_offset,
+                                   normals_stride, normals_offset,
+                                   colors_stride, colors_offset);
+
+    static_assert(sizeof(icosphere::kIndices[0]) == 2,
+                  "Indices must be 2 bytes");
+    GL(DrawElementsInstanced_(GL_TRIANGLES, OZZ_ARRAY_SIZE(icosphere::kIndices),
+                              GL_UNSIGNED_SHORT, 0,
+                              static_cast<GLsizei>(_transforms.size())));
+
+    // Unbinds.
+    ambient_shader_instanced->Unbind();
+  } else {
+    // OpenGL doesn't support 0 stride (without glVertexAttribDivisor
+    // extension), so we must copy a color for each vertex.
+    const GLsizei colors_stride = sizeof(uint8_t) * 4;
+    const GLsizei colors_size = colors_stride * icosphere::kNumVertices;
+    const GLsizei bo_size = sizeof(icosphere::kVertices) + colors_size;
+
+    // Reallocate vertex buffer.
+    GL(BindBuffer(GL_ARRAY_BUFFER, dynamic_array_bo_));
+    GL(BufferData(GL_ARRAY_BUFFER, bo_size, nullptr, GL_STREAM_DRAW));
+    GL(BufferSubData(GL_ARRAY_BUFFER, positions_offset,
+                     sizeof(icosphere::kVertices), icosphere::kVertices));
+    Color* colors = static_cast<Color*>(scratch_buffer_.Resize(colors_size));
+    for (int i = 0; i < icosphere::kNumVertices; ++i) {
+      colors[i] = _color;
+    }
+    GL(BufferSubData(GL_ARRAY_BUFFER, colors_offset, colors_size, colors));
+
+    for (size_t i = 0; i < _transforms.size(); i++) {
+      const ozz::math::Float4x4& transform = Scale(_transforms[i], radius);
+
+      ambient_shader->Bind(transform, camera()->view_proj(), positions_stride,
+                           positions_offset, normals_stride, normals_offset,
+                           colors_stride, colors_offset);
+
+      static_assert(sizeof(icosphere::kIndices[0]) == 2,
+                    "Indices must be 2 bytes");
+      GL(DrawElements(GL_TRIANGLES, OZZ_ARRAY_SIZE(icosphere::kIndices),
+                      GL_UNSIGNED_SHORT, 0));
+
+      // Unbinds.
+      ambient_shader->Unbind();
+    }
+    GL(BindBuffer(GL_ARRAY_BUFFER, 0));
+    GL(BindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0));
+  }
+
+  return true;
+}
+
+bool RendererImpl::DrawSegment(const math::Float3& _begin,
+                               const math::Float3& _end, Color _color,
+                               const ozz::math::Float4x4& _transform) {
+  const math::Float3 dir(_end - _begin);
+  return DrawVectors(ozz::span<const float>(&_begin.x, 3), 12,
+                     ozz::span<const float>(&dir.x, 3), 12, 1, 1.f, _color,
+                     _transform);
+}
+
+bool RendererImpl::DrawVectors(ozz::span<const float> _positions,
                                size_t _positions_stride,
-                               ozz::Range<const float> _directions,
+                               ozz::span<const float> _directions,
                                size_t _directions_stride, int _num_vectors,
-                               float _vector_length, Renderer::Color _color,
+                               float _vector_length, Color _color,
                                const ozz::math::Float4x4& _transform) {
   // Invalid range length.
-  if (PointerStride(_positions.begin, _positions_stride * _num_vectors) >
-          _positions.end ||
-      PointerStride(_directions.begin, _directions_stride * _num_vectors) >
-          _directions.end) {
+  if (PointerStride(_positions.begin(), _positions_stride * _num_vectors) >
+          _positions.end() ||
+      PointerStride(_directions.begin(), _directions_stride * _num_vectors) >
+          _directions.end()) {
     return false;
   }
 
@@ -879,14 +974,14 @@ bool RendererImpl::DrawVectors(ozz::Range<const float> _positions,
 
   for (int i = 0; i < _num_vectors; ++i) {
     const float* position =
-        PointerStride(_positions.begin, _positions_stride * i);
+        PointerStride(_positions.data(), _positions_stride * i);
     v.pos[0] = position[0];
     v.pos[1] = position[1];
     v.pos[2] = position[2];
     im.PushVertex(v);
 
     const float* direction =
-        PointerStride(_directions.begin, _directions_stride * i);
+        PointerStride(_directions.data(), _directions_stride * i);
     v.pos[0] = position[0] + direction[0] * _vector_length;
     v.pos[1] = position[1] + direction[1] * _vector_length;
     v.pos[2] = position[2] + direction[2] * _vector_length;
@@ -897,21 +992,21 @@ bool RendererImpl::DrawVectors(ozz::Range<const float> _positions,
 }
 
 bool RendererImpl::DrawBinormals(
-    ozz::Range<const float> _positions, size_t _positions_stride,
-    ozz::Range<const float> _normals, size_t _normals_stride,
-    ozz::Range<const float> _tangents, size_t _tangents_stride,
-    ozz::Range<const float> _handenesses, size_t _handenesses_stride,
-    int _num_vectors, float _vector_length, Renderer::Color _color,
+    ozz::span<const float> _positions, size_t _positions_stride,
+    ozz::span<const float> _normals, size_t _normals_stride,
+    ozz::span<const float> _tangents, size_t _tangents_stride,
+    ozz::span<const float> _handenesses, size_t _handenesses_stride,
+    int _num_vectors, float _vector_length, Color _color,
     const ozz::math::Float4x4& _transform) {
   // Invalid range length.
-  if (PointerStride(_positions.begin, _positions_stride * _num_vectors) >
-          _positions.end ||
-      PointerStride(_normals.begin, _normals_stride * _num_vectors) >
-          _normals.end ||
-      PointerStride(_tangents.begin, _tangents_stride * _num_vectors) >
-          _tangents.end ||
-      PointerStride(_handenesses.begin, _handenesses_stride * _num_vectors) >
-          _handenesses.end) {
+  if (PointerStride(_positions.begin(), _positions_stride * _num_vectors) >
+          _positions.end() ||
+      PointerStride(_normals.begin(), _normals_stride * _num_vectors) >
+          _normals.end() ||
+      PointerStride(_tangents.begin(), _tangents_stride * _num_vectors) >
+          _tangents.end() ||
+      PointerStride(_handenesses.begin(), _handenesses_stride * _num_vectors) >
+          _handenesses.end()) {
     return false;
   }
 
@@ -921,20 +1016,20 @@ bool RendererImpl::DrawBinormals(
 
   for (int i = 0; i < _num_vectors; ++i) {
     const float* position =
-        PointerStride(_positions.begin, _positions_stride * i);
+        PointerStride(_positions.data(), _positions_stride * i);
     v.pos[0] = position[0];
     v.pos[1] = position[1];
     v.pos[2] = position[2];
     im.PushVertex(v);
 
     // Compute binormal.
-    const float* p_normal = PointerStride(_normals.begin, _normals_stride * i);
+    const float* p_normal = PointerStride(_normals.data(), _normals_stride * i);
     const ozz::math::Float3 normal(p_normal[0], p_normal[1], p_normal[2]);
     const float* p_tangent =
-        PointerStride(_tangents.begin, _tangents_stride * i);
+        PointerStride(_tangents.data(), _tangents_stride * i);
     const ozz::math::Float3 tangent(p_tangent[0], p_tangent[1], p_tangent[2]);
     const float* p_handedness =
-        PointerStride(_handenesses.begin, _handenesses_stride * i);
+        PointerStride(_handenesses.data(), _handenesses_stride * i);
     // Handedness is used to flip binormal.
     const ozz::math::Float3 binormal = Cross(normal, tangent) * p_handedness[0];
 
@@ -1008,6 +1103,12 @@ const float kDefaultUVsArray[][2] = {
 bool RendererImpl::DrawMesh(const Mesh& _mesh,
                             const ozz::math::Float4x4& _transform,
                             const Options& _options) {
+  if (_options.wireframe) {
+#ifndef EMSCRIPTEN
+    GL(PolygonMode(GL_FRONT_AND_BACK, GL_LINE));
+#endif  // EMSCRIPTEN
+  }
+
   const int vertex_count = _mesh.vertex_count();
   const GLsizei positions_offset = 0;
   const GLsizei positions_stride =
@@ -1032,7 +1133,7 @@ bool RendererImpl::DrawMesh(const Mesh& _mesh,
   const GLsizei vbo_size =
       positions_size + normals_size + colors_size + uvs_size;
   GL(BindBuffer(GL_ARRAY_BUFFER, dynamic_array_bo_));
-  GL(BufferData(GL_ARRAY_BUFFER, vbo_size, NULL, GL_STREAM_DRAW));
+  GL(BufferData(GL_ARRAY_BUFFER, vbo_size, nullptr, GL_STREAM_DRAW));
 
   // Iterate mesh parts and fills vbo.
   size_t vertex_offset = 0;
@@ -1055,7 +1156,8 @@ bool RendererImpl::DrawMesh(const Mesh& _mesh,
           part_normal_count * normals_stride, array_begin(part.normals)));
     } else {
       // Un-optimal path used when the right number of normals is not provided.
-      OZZ_STATIC_ASSERT(sizeof(kDefaultNormalsArray[0]) == normals_stride);
+      static_assert(sizeof(kDefaultNormalsArray[0]) == normals_stride,
+                    "Stride mismatch");
       for (size_t j = 0; j < part_vertex_count;
            j += OZZ_ARRAY_SIZE(kDefaultNormalsArray)) {
         const size_t this_loop_count = math::Min(
@@ -1077,7 +1179,8 @@ bool RendererImpl::DrawMesh(const Mesh& _mesh,
           part_color_count * colors_stride, array_begin(part.colors)));
     } else {
       // Un-optimal path used when the right number of colors is not provided.
-      OZZ_STATIC_ASSERT(sizeof(kDefaultColorsArray[0]) == colors_stride);
+      static_assert(sizeof(kDefaultColorsArray[0]) == colors_stride,
+                    "Stride mismatch");
       for (size_t j = 0; j < part_vertex_count;
            j += OZZ_ARRAY_SIZE(kDefaultColorsArray)) {
         const size_t this_loop_count = math::Min(
@@ -1116,13 +1219,13 @@ bool RendererImpl::DrawMesh(const Mesh& _mesh,
   }
 
   // Binds shader with this array buffer, depending on rendering options.
-  Shader* shader = NULL;
+  Shader* shader = nullptr;
   if (_options.texture) {
     ambient_textured_shader->Bind(_transform, camera()->view_proj(),
                                   positions_stride, positions_offset,
                                   normals_stride, normals_offset, colors_stride,
                                   colors_offset, uvs_stride, uvs_offset);
-    shader = ambient_textured_shader;
+    shader = ambient_textured_shader.get();
 
     // Binds default texture
     GL(BindTexture(GL_TEXTURE_2D, checkered_texture_));
@@ -1130,10 +1233,8 @@ bool RendererImpl::DrawMesh(const Mesh& _mesh,
     ambient_shader->Bind(_transform, camera()->view_proj(), positions_stride,
                          positions_offset, normals_stride, normals_offset,
                          colors_stride, colors_offset);
-    shader = ambient_shader;
+    shader = ambient_shader.get();
   }
-
-  GL(BindBuffer(GL_ARRAY_BUFFER, 0));
 
   // Maps the index dynamic buffer and update it.
   GL(BindBuffer(GL_ELEMENT_ARRAY_BUFFER, dynamic_index_bo_));
@@ -1143,58 +1244,65 @@ bool RendererImpl::DrawMesh(const Mesh& _mesh,
                 array_begin(indices), GL_STREAM_DRAW));
 
   // Draws the mesh.
-  OZZ_STATIC_ASSERT(sizeof(Mesh::TriangleIndices::value_type) == 2);
+  static_assert(sizeof(Mesh::TriangleIndices::value_type) == 2,
+                "Expects 2 bytes indices.");
   GL(DrawElements(GL_TRIANGLES, static_cast<GLsizei>(indices.size()),
                   GL_UNSIGNED_SHORT, 0));
 
   // Unbinds.
+  GL(BindBuffer(GL_ARRAY_BUFFER, 0));
   GL(BindTexture(GL_TEXTURE_2D, 0));
   GL(BindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0));
   shader->Unbind();
 
+  if (_options.wireframe) {
+#ifndef EMSCRIPTEN
+    GL(PolygonMode(GL_FRONT_AND_BACK, GL_FILL));
+#endif  // EMSCRIPTEN
+  }
+
   // Renders debug normals.
   if (_options.normals) {
-    const Renderer::Color green = {0, 255, 0, 255};
     for (size_t i = 0; i < _mesh.parts.size(); ++i) {
       const Mesh::Part& part = _mesh.parts[i];
-      DrawVectors(make_range(part.positions),
+      DrawVectors(make_span(part.positions),
                   ozz::sample::Mesh::Part::kPositionsCpnts * sizeof(float),
-                  make_range(part.normals),
+                  make_span(part.normals),
                   ozz::sample::Mesh::Part::kNormalsCpnts * sizeof(float),
-                  part.vertex_count(), .03f, green, _transform);
+                  part.vertex_count(), .03f, ozz::sample::kGreen, _transform);
     }
   }
 
   // Renders debug tangents.
   if (_options.tangents) {
-    const Renderer::Color red = {255, 0, 0, 255};
     for (size_t i = 0; i < _mesh.parts.size(); ++i) {
       const Mesh::Part& part = _mesh.parts[i];
-      DrawVectors(make_range(part.positions),
-                  ozz::sample::Mesh::Part::kPositionsCpnts * sizeof(float),
-                  make_range(part.tangents),
-                  ozz::sample::Mesh::Part::kTangentsCpnts * sizeof(float),
-                  part.vertex_count(), .03f, red, _transform);
+      if (part.normals.size() != 0) {
+        DrawVectors(make_span(part.positions),
+                    ozz::sample::Mesh::Part::kPositionsCpnts * sizeof(float),
+                    make_span(part.tangents),
+                    ozz::sample::Mesh::Part::kTangentsCpnts * sizeof(float),
+                    part.vertex_count(), .03f, ozz::sample::kRed, _transform);
+      }
     }
   }
 
   // Renders debug binormals.
-  if (_options.binormals /* &&
-      skinning_job.out_normals.Count() > 0 &&
-      skinning_job.out_tangents.Count() > 0*/) {
+  if (_options.binormals) {
     for (size_t i = 0; i < _mesh.parts.size(); ++i) {
       const Mesh::Part& part = _mesh.parts[i];
-      const Renderer::Color blue = {0, 0, 255, 255};
-      DrawBinormals(
-          make_range(part.positions),
-          ozz::sample::Mesh::Part::kPositionsCpnts * sizeof(float),
-          make_range(part.normals),
-          ozz::sample::Mesh::Part::kNormalsCpnts * sizeof(float),
-          make_range(part.tangents),
-          ozz::sample::Mesh::Part::kTangentsCpnts * sizeof(float),
-          ozz::Range<const float>(&part.tangents[3], part.tangents.size()),
-          ozz::sample::Mesh::Part::kTangentsCpnts * sizeof(float),
-          part.vertex_count(), .03f, blue, _transform);
+      if (part.normals.size() != 0 && part.tangents.size() != 0) {
+        DrawBinormals(
+            make_span(part.positions),
+            ozz::sample::Mesh::Part::kPositionsCpnts * sizeof(float),
+            make_span(part.normals),
+            ozz::sample::Mesh::Part::kNormalsCpnts * sizeof(float),
+            make_span(part.tangents),
+            ozz::sample::Mesh::Part::kTangentsCpnts * sizeof(float),
+            ozz::span<const float>(&part.tangents[3], part.tangents.size()),
+            ozz::sample::Mesh::Part::kTangentsCpnts * sizeof(float),
+            part.vertex_count(), .03f, ozz::sample::kBlue, _transform);
+      }
     }
   }
 
@@ -1202,12 +1310,19 @@ bool RendererImpl::DrawMesh(const Mesh& _mesh,
 }
 
 bool RendererImpl::DrawSkinnedMesh(
-    const Mesh& _mesh, const Range<math::Float4x4> _skinning_matrices,
+    const Mesh& _mesh, const span<math::Float4x4> _skinning_matrices,
     const ozz::math::Float4x4& _transform, const Options& _options) {
   // Forward to DrawMesh function is skinning is disabled.
   if (_options.skip_skinning) {
     return DrawMesh(_mesh, _transform, _options);
   }
+
+  if (_options.wireframe) {
+#ifndef EMSCRIPTEN
+    GL(PolygonMode(GL_FRONT_AND_BACK, GL_LINE));
+#endif  // EMSCRIPTEN
+  }
+
   const int vertex_count = _mesh.vertex_count();
 
   // Positions and normals are interleaved to improve caching while executing
@@ -1262,49 +1377,47 @@ bool RendererImpl::DrawSkinnedMesh(
     skinning_job.joint_matrices = _skinning_matrices;
 
     // Setup joint's indices.
-    skinning_job.joint_indices = make_range(part.joint_indices);
+    skinning_job.joint_indices = make_span(part.joint_indices);
     skinning_job.joint_indices_stride =
         sizeof(uint16_t) * part_influences_count;
 
     // Setup joint's weights.
     if (part_influences_count > 1) {
-      skinning_job.joint_weights = make_range(part.joint_weights);
+      skinning_job.joint_weights = make_span(part.joint_weights);
       skinning_job.joint_weights_stride =
           sizeof(float) * (part_influences_count - 1);
     }
 
     // Setup input positions, coming from the loaded mesh.
-    skinning_job.in_positions = make_range(part.positions);
+    skinning_job.in_positions = make_span(part.positions);
     skinning_job.in_positions_stride =
         sizeof(float) * ozz::sample::Mesh::Part::kPositionsCpnts;
 
     // Setup output positions, coming from the rendering output mesh buffers.
     // We need to offset the buffer every loop.
-    skinning_job.out_positions.begin =
-        reinterpret_cast<float*>(ozz::PointerStride(
-            vbo_map,
-            positions_offset + processed_vertex_count * positions_stride));
-    skinning_job.out_positions.end = ozz::PointerStride(
-        skinning_job.out_positions.begin, part_vertex_count * positions_stride);
+    float* out_positions_begin = reinterpret_cast<float*>(ozz::PointerStride(
+        vbo_map, positions_offset + processed_vertex_count * positions_stride));
+    float* out_positions_end = ozz::PointerStride(
+        out_positions_begin, part_vertex_count * positions_stride);
+    skinning_job.out_positions = {out_positions_begin, out_positions_end};
     skinning_job.out_positions_stride = positions_stride;
 
     // Setup normals if input are provided.
     float* out_normal_begin = reinterpret_cast<float*>(ozz::PointerStride(
         vbo_map, normals_offset + processed_vertex_count * normals_stride));
-    const float* out_normal_end = ozz::PointerStride(
+    float* out_normal_end = ozz::PointerStride(
         out_normal_begin, part_vertex_count * normals_stride);
 
     if (part.normals.size() / ozz::sample::Mesh::Part::kNormalsCpnts ==
         part_vertex_count) {
       // Setup input normals, coming from the loaded mesh.
-      skinning_job.in_normals = make_range(part.normals);
+      skinning_job.in_normals = make_span(part.normals);
       skinning_job.in_normals_stride =
           sizeof(float) * ozz::sample::Mesh::Part::kNormalsCpnts;
 
       // Setup output normals, coming from the rendering output mesh buffers.
       // We need to offset the buffer every loop.
-      skinning_job.out_normals.begin = out_normal_begin;
-      skinning_job.out_normals.end = out_normal_end;
+      skinning_job.out_normals = {out_normal_begin, out_normal_end};
       skinning_job.out_normals_stride = normals_stride;
     } else {
       // Fills output with default normals.
@@ -1319,20 +1432,19 @@ bool RendererImpl::DrawSkinnedMesh(
     // Setup tangents if input are provided.
     float* out_tangent_begin = reinterpret_cast<float*>(ozz::PointerStride(
         vbo_map, tangents_offset + processed_vertex_count * tangents_stride));
-    const float* out_tangent_end = ozz::PointerStride(
+    float* out_tangent_end = ozz::PointerStride(
         out_tangent_begin, part_vertex_count * tangents_stride);
 
     if (part.tangents.size() / ozz::sample::Mesh::Part::kTangentsCpnts ==
         part_vertex_count) {
       // Setup input tangents, coming from the loaded mesh.
-      skinning_job.in_tangents = make_range(part.tangents);
+      skinning_job.in_tangents = make_span(part.tangents);
       skinning_job.in_tangents_stride =
           sizeof(float) * ozz::sample::Mesh::Part::kTangentsCpnts;
 
       // Setup output tangents, coming from the rendering output mesh buffers.
       // We need to offset the buffer every loop.
-      skinning_job.out_tangents.begin = out_tangent_begin;
-      skinning_job.out_tangents.end = out_tangent_end;
+      skinning_job.out_tangents = {out_tangent_begin, out_tangent_end};
       skinning_job.out_tangents_stride = tangents_stride;
     } else {
       // Fills output with default tangents.
@@ -1350,33 +1462,32 @@ bool RendererImpl::DrawSkinnedMesh(
     }
 
     // Renders debug normals.
-    if (_options.normals && skinning_job.out_normals.Count() > 0) {
-      const Renderer::Color green = {0, 255, 0, 255};
+    if (_options.normals && skinning_job.out_normals.size() > 0) {
       DrawVectors(skinning_job.out_positions, skinning_job.out_positions_stride,
                   skinning_job.out_normals, skinning_job.out_normals_stride,
-                  skinning_job.vertex_count, .03f, green, _transform);
+                  skinning_job.vertex_count, .03f, ozz::sample::kGreen,
+                  _transform);
     }
 
     // Renders debug tangents.
-    if (_options.tangents && skinning_job.out_tangents.Count() > 0) {
-      const Renderer::Color red = {255, 0, 0, 255};
+    if (_options.tangents && skinning_job.out_tangents.size() > 0) {
       DrawVectors(skinning_job.out_positions, skinning_job.out_positions_stride,
                   skinning_job.out_tangents, skinning_job.out_tangents_stride,
-                  skinning_job.vertex_count, .03f, red, _transform);
+                  skinning_job.vertex_count, .03f, ozz::sample::kRed,
+                  _transform);
     }
 
     // Renders debug binormals.
-    if (_options.binormals && skinning_job.out_normals.Count() > 0 &&
-        skinning_job.out_tangents.Count() > 0) {
-      const Renderer::Color blue = {0, 0, 255, 255};
+    if (_options.binormals && skinning_job.out_normals.size() > 0 &&
+        skinning_job.out_tangents.size() > 0) {
       DrawBinormals(skinning_job.out_positions,
                     skinning_job.out_positions_stride, skinning_job.out_normals,
                     skinning_job.out_normals_stride, skinning_job.out_tangents,
                     skinning_job.out_tangents_stride,
-                    ozz::Range<const float>(skinning_job.in_tangents.begin + 3,
-                                            skinning_job.in_tangents.end + 3),
+                    ozz::span<const float>(skinning_job.in_tangents.begin() + 3,
+                                           skinning_job.in_tangents.end() + 3),
                     skinning_job.in_tangents_stride, skinning_job.vertex_count,
-                    .03f, blue, _transform);
+                    .03f, ozz::sample::kBlue, _transform);
     }
 
     // Handles colors which aren't affected by skinning.
@@ -1390,7 +1501,9 @@ bool RendererImpl::DrawSkinnedMesh(
           array_begin(part.colors), part_vertex_count * colors_stride);
     } else {
       // Un-optimal path used when the right number of colors is not provided.
-      OZZ_STATIC_ASSERT(sizeof(kDefaultColorsArray[0]) == colors_stride);
+      static_assert(sizeof(kDefaultColorsArray[0]) == colors_stride,
+                    "Stride mismatch");
+
       for (size_t j = 0; j < part_vertex_count;
            j += OZZ_ARRAY_SIZE(kDefaultColorsArray)) {
         const size_t this_loop_count = math::Min(
@@ -1402,7 +1515,7 @@ bool RendererImpl::DrawSkinnedMesh(
       }
     }
 
-    // Handles uvs which aren't affected by skinning.
+    // Copies uvs which aren't affected by skinning.
     if (_options.texture) {
       if (part_vertex_count ==
           part.uvs.size() / ozz::sample::Mesh::Part::kUVsCpnts) {
@@ -1431,17 +1544,17 @@ bool RendererImpl::DrawSkinnedMesh(
 
   // Updates dynamic vertex buffer with skinned data.
   GL(BindBuffer(GL_ARRAY_BUFFER, dynamic_array_bo_));
-  GL(BufferData(GL_ARRAY_BUFFER, vbo_size, NULL, GL_STREAM_DRAW));
+  GL(BufferData(GL_ARRAY_BUFFER, vbo_size, nullptr, GL_STREAM_DRAW));
   GL(BufferSubData(GL_ARRAY_BUFFER, 0, vbo_size, vbo_map));
 
   // Binds shader with this array buffer, depending on rendering options.
-  Shader* shader = NULL;
+  Shader* shader = nullptr;
   if (_options.texture) {
     ambient_textured_shader->Bind(_transform, camera()->view_proj(),
                                   positions_stride, positions_offset,
                                   normals_stride, normals_offset, colors_stride,
                                   colors_offset, uvs_stride, uvs_offset);
-    shader = ambient_textured_shader;
+    shader = ambient_textured_shader.get();
 
     // Binds default texture
     GL(BindTexture(GL_TEXTURE_2D, checkered_texture_));
@@ -1449,10 +1562,8 @@ bool RendererImpl::DrawSkinnedMesh(
     ambient_shader->Bind(_transform, camera()->view_proj(), positions_stride,
                          positions_offset, normals_stride, normals_offset,
                          colors_stride, colors_offset);
-    shader = ambient_shader;
+    shader = ambient_shader.get();
   }
-
-  GL(BindBuffer(GL_ARRAY_BUFFER, 0));
 
   // Maps the index dynamic buffer and update it.
   GL(BindBuffer(GL_ELEMENT_ARRAY_BUFFER, dynamic_index_bo_));
@@ -1462,30 +1573,39 @@ bool RendererImpl::DrawSkinnedMesh(
                 array_begin(indices), GL_STREAM_DRAW));
 
   // Draws the mesh.
-  OZZ_STATIC_ASSERT(sizeof(Mesh::TriangleIndices::value_type) == 2);
+  static_assert(sizeof(Mesh::TriangleIndices::value_type) == 2,
+                "Expects 2 bytes indices.");
   GL(DrawElements(GL_TRIANGLES, static_cast<GLsizei>(indices.size()),
                   GL_UNSIGNED_SHORT, 0));
 
   // Unbinds.
+  GL(BindBuffer(GL_ARRAY_BUFFER, 0));
   GL(BindTexture(GL_TEXTURE_2D, 0));
   GL(BindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0));
   shader->Unbind();
+
+  if (_options.wireframe) {
+#ifndef EMSCRIPTEN
+    GL(PolygonMode(GL_FRONT_AND_BACK, GL_FILL));
+#endif  // EMSCRIPTEN
+  }
 
   return true;
 }
 
 // Helper macro used to initialize extension function pointer.
-#define OZZ_INIT_GL_EXT(_fct, _fct_type, _success)                        \
-  \
-do {                                                                      \
-    _fct = reinterpret_cast<_fct_type>(glfwGetProcAddress(#_fct));        \
-    if (_fct == NULL) {                                                   \
-      log::Err() << "Unable to install " #_fct " function." << std::endl; \
-      _success &= false;                                                  \
-    }                                                                     \
-  \
-}                                                                    \
-  while (void(0), 0)
+#define OZZ_INIT_GL_EXT_N(_fct, _fct_name, _fct_type, _success)               \
+  do {                                                                        \
+    _fct = reinterpret_cast<_fct_type>(glfwGetProcAddress(_fct_name));        \
+    if (_fct == nullptr) {                                                    \
+      log::Err() << "Unable to install " _fct_name " function." << std::endl; \
+      _success &= false;                                                      \
+    }                                                                         \
+                                                                              \
+  } while (void(0), 0)
+
+#define OZZ_INIT_GL_EXT(_fct, _fct_type, _success) \
+  OZZ_INIT_GL_EXT_N(_fct, #_fct, _fct_type, _success)
 
 bool RendererImpl::InitOpenGLExtensions() {
   bool optional_success = true;
@@ -1573,23 +1693,23 @@ bool RendererImpl::InitOpenGLExtensions() {
                << std::endl;
   }
 
-  GL_ARB_instanced_arrays =
+  GL_ARB_instanced_arrays_supported =
       glfwExtensionSupported("GL_ARB_instanced_arrays") != 0;
-  if (GL_ARB_instanced_arrays) {
+  if (GL_ARB_instanced_arrays_supported) {
     log::Log() << "Optional GL_ARB_instanced_arrays extensions found."
                << std::endl;
     success = true;
-    OZZ_INIT_GL_EXT(glVertexAttribDivisorARB, PFNGLVERTEXATTRIBDIVISORARBPROC,
-                    success);
-    OZZ_INIT_GL_EXT(glDrawArraysInstancedARB, PFNGLDRAWARRAYSINSTANCEDARBPROC,
-                    success);
-    OZZ_INIT_GL_EXT(glDrawElementsInstancedARB,
-                    PFNGLDRAWELEMENTSINSTANCEDARBPROC, success);
+    OZZ_INIT_GL_EXT_N(glVertexAttribDivisor_, "glVertexAttribDivisorARB",
+                      PFNGLVERTEXATTRIBDIVISORARBPROC, success);
+    OZZ_INIT_GL_EXT_N(glDrawArraysInstanced_, "glDrawArraysInstancedARB",
+                      PFNGLDRAWARRAYSINSTANCEDARBPROC, success);
+    OZZ_INIT_GL_EXT_N(glDrawElementsInstanced_, "glDrawElementsInstancedARB",
+                      PFNGLDRAWELEMENTSINSTANCEDARBPROC, success);
     if (!success) {
       log::Err()
           << "Failed to setup GL_ARB_instanced_arrays, feature is disabled."
           << std::endl;
-      GL_ARB_instanced_arrays = false;
+      GL_ARB_instanced_arrays_supported = false;
     }
   } else {
     log::Log() << "Optional GL_ARB_instanced_arrays extensions not found."
@@ -1598,7 +1718,7 @@ bool RendererImpl::InitOpenGLExtensions() {
   return true;
 }
 
-RendererImpl::ScratchBuffer::ScratchBuffer() : buffer_(NULL), size_(0) {}
+RendererImpl::ScratchBuffer::ScratchBuffer() : buffer_(nullptr), size_(0) {}
 
 RendererImpl::ScratchBuffer::~ScratchBuffer() {
   memory::default_allocator()->Deallocate(buffer_);
@@ -1607,16 +1727,17 @@ RendererImpl::ScratchBuffer::~ScratchBuffer() {
 void* RendererImpl::ScratchBuffer::Resize(size_t _size) {
   if (_size > size_) {
     size_ = _size;
-    buffer_ = memory::default_allocator()->Reallocate(buffer_, _size, 16);
+    memory::default_allocator()->Deallocate(buffer_);
+    buffer_ = memory::default_allocator()->Allocate(_size, 16);
   }
   return buffer_;
 }
-}  // internal
-}  // sample
-}  // ozz
+}  // namespace internal
+}  // namespace sample
+}  // namespace ozz
 
 // Helper macro used to declare extension function pointer.
-#define OZZ_DECL_GL_EXT(_fct, _fct_type) _fct_type _fct = NULL
+#define OZZ_DECL_GL_EXT(_fct, _fct_type) _fct_type _fct = nullptr
 
 #ifdef OZZ_GL_VERSION_1_5_EXT
 OZZ_DECL_GL_EXT(glBindBuffer, PFNGLBINDBUFFERPROC);
@@ -1691,7 +1812,7 @@ OZZ_DECL_GL_EXT(glVertexAttrib4fv, PFNGLVERTEXATTRIB4FVPROC);
 OZZ_DECL_GL_EXT(glVertexAttribPointer, PFNGLVERTEXATTRIBPOINTERPROC);
 #endif  // OZZ_GL_VERSION_2_0_EXT
 
-bool GL_ARB_instanced_arrays = false;
-OZZ_DECL_GL_EXT(glVertexAttribDivisorARB, PFNGLVERTEXATTRIBDIVISORARBPROC);
-OZZ_DECL_GL_EXT(glDrawArraysInstancedARB, PFNGLDRAWARRAYSINSTANCEDARBPROC);
-OZZ_DECL_GL_EXT(glDrawElementsInstancedARB, PFNGLDRAWELEMENTSINSTANCEDARBPROC);
+bool GL_ARB_instanced_arrays_supported = false;
+OZZ_DECL_GL_EXT(glVertexAttribDivisor_, PFNGLVERTEXATTRIBDIVISORARBPROC);
+OZZ_DECL_GL_EXT(glDrawArraysInstanced_, PFNGLDRAWARRAYSINSTANCEDARBPROC);
+OZZ_DECL_GL_EXT(glDrawElementsInstanced_, PFNGLDRAWELEMENTSINSTANCEDARBPROC);

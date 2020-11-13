@@ -3,7 +3,7 @@
 // ozz-animation is hosted at http://github.com/guillaumeblanc/ozz-animation  //
 // and distributed under the MIT License (MIT).                               //
 //                                                                            //
-// Copyright (c) 2015 Guillaume Blanc                                         //
+// Copyright (c) Guillaume Blanc                                              //
 //                                                                            //
 // Permission is hereby granted, free of charge, to any person obtaining a    //
 // copy of this software and associated documentation files (the "Software"), //
@@ -32,10 +32,10 @@
 
 namespace ozz {
 namespace io {
-template <>
-void Save(OArchive& _archive, const String::Std* _values, size_t _count) {
+void Extern<string>::Save(OArchive& _archive, const string* _values,
+                          size_t _count) {
   for (size_t i = 0; i < _count; i++) {
-    const ozz::String::Std& string = _values[i];
+    const ozz::string& string = _values[i];
 
     // Get size excluding null terminating character.
     uint32_t size = static_cast<uint32_t>(string.size());
@@ -44,12 +44,11 @@ void Save(OArchive& _archive, const String::Std* _values, size_t _count) {
   }
 }
 
-template <>
-void Load(IArchive& _archive, String::Std* _values, size_t _count,
-          uint32_t _version) {
+void Extern<string>::Load(IArchive& _archive, string* _values, size_t _count,
+                          uint32_t _version) {
   (void)_version;
   for (size_t i = 0; i < _count; i++) {
-    ozz::String::Std& string = _values[i];
+    ozz::string& string = _values[i];
 
     // Ensure an existing string is reseted.
     string.clear();
@@ -72,5 +71,5 @@ void Load(IArchive& _archive, String::Std* _values, size_t _count,
     }
   }
 }
-}  // io
-}  // ozz
+}  // namespace io
+}  // namespace ozz

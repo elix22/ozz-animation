@@ -3,7 +3,7 @@
 // ozz-animation is hosted at http://github.com/guillaumeblanc/ozz-animation  //
 // and distributed under the MIT License (MIT).                               //
 //                                                                            //
-// Copyright (c) 2015 Guillaume Blanc                                         //
+// Copyright (c) Guillaume Blanc                                              //
 //                                                                            //
 // Permission is hereby granted, free of charge, to any person obtaining a    //
 // copy of this software and associated documentation files (the "Software"), //
@@ -37,41 +37,6 @@
 #include "ozz/base/memory/allocator.h"
 
 namespace ozz {
-namespace io {
-// JointProperties' version can be declared locally as it will be saved from
-// this
-// cpp file only.
-OZZ_IO_TYPE_VERSION(1, animation::Skeleton::JointProperties)
-
-// Specializes Skeleton::JointProperties. This structure's bitset isn't written
-// as-is because of endianness issues.
-template <>
-void Save(OArchive& _archive,
-          const animation::Skeleton::JointProperties* _properties,
-          size_t _count) {
-  for (size_t i = 0; i < _count; ++i) {
-    uint16_t parent = _properties[i].parent;
-    _archive << parent;
-    bool is_leaf = _properties[i].is_leaf != 0;
-    _archive << is_leaf;
-  }
-}
-
-template <>
-void Load(IArchive& _archive, animation::Skeleton::JointProperties* _properties,
-          size_t _count, uint32_t _version) {
-  (void)_version;
-  for (size_t i = 0; i < _count; ++i) {
-    uint16_t parent;
-    _archive >> parent;
-    _properties[i].parent = parent;
-    bool is_leaf;
-    _archive >> is_leaf;
-    _properties[i].is_leaf = is_leaf;
-  }
-}
-}  // io
-
 namespace animation {
 
 Skeleton::Skeleton() {}
@@ -81,61 +46,54 @@ Skeleton::~Skeleton() { Deallocate(); }
 char* Skeleton::Allocate(size_t _chars_size, size_t _num_joints) {
   // Distributes buffer memory while ensuring proper alignment (serves larger
   // alignment values first).
-  OZZ_STATIC_ASSERT(
-      OZZ_ALIGN_OF(math::SoaTransform) >= OZZ_ALIGN_OF(char*) &&
-      OZZ_ALIGN_OF(char*) >= OZZ_ALIGN_OF(Skeleton::JointProperties) &&
-      OZZ_ALIGN_OF(Skeleton::JointProperties) >= OZZ_ALIGN_OF(char));
+  static_assert(alignof(math::SoaTransform) >= alignof(char*) &&
+                    alignof(char*) >= alignof(int16_t) &&
+                    alignof(int16_t) >= alignof(char),
+                "Must serve larger alignment values first)");
 
-  assert(bind_pose_.Size() == 0 && joint_names_.Size() == 0 &&
-         joint_properties_.Size() == 0);
+  assert(joint_bind_poses_.size() == 0 && joint_names_.size() == 0 &&
+         joint_parents_.size() == 0);
 
   // Early out if no joint.
   if (_num_joints == 0) {
-    return NULL;
+    return nullptr;
   }
 
   // Bind poses have SoA format
-  const size_t bind_poses_size =
-      (_num_joints + 3) / 4 * sizeof(math::SoaTransform);
+  const size_t num_soa_joints = (_num_joints + 3) / 4;
+  const size_t joint_bind_poses_size =
+      num_soa_joints * sizeof(math::SoaTransform);
   const size_t names_size = _num_joints * sizeof(char*);
-  const size_t properties_size =
-      _num_joints * sizeof(Skeleton::JointProperties);
+  const size_t joint_parents_size = _num_joints * sizeof(int16_t);
   const size_t buffer_size =
-      names_size + _chars_size + properties_size + bind_poses_size;
+      names_size + _chars_size + joint_parents_size + joint_bind_poses_size;
 
   // Allocates whole buffer.
-  char* buffer = reinterpret_cast<char*>(memory::default_allocator()->Allocate(
-      buffer_size, OZZ_ALIGN_OF(math::SoaTransform)));
+  span<char> buffer = {static_cast<char*>(memory::default_allocator()->Allocate(
+                           buffer_size, alignof(math::SoaTransform))),
+                       buffer_size};
 
+  // Serves larger alignment values first.
   // Bind pose first, biggest alignment.
-  bind_pose_.begin = reinterpret_cast<math::SoaTransform*>(buffer);
-  assert(math::IsAligned(bind_pose_.begin, OZZ_ALIGN_OF(math::SoaTransform)));
-  buffer += bind_poses_size;
-  bind_pose_.end = reinterpret_cast<math::SoaTransform*>(buffer);
+  joint_bind_poses_ = fill_span<math::SoaTransform>(buffer, num_soa_joints);
 
   // Then names array, second biggest alignment.
-  joint_names_.begin = reinterpret_cast<char**>(buffer);
-  assert(math::IsAligned(joint_names_.begin, OZZ_ALIGN_OF(char**)));
-  buffer += names_size;
-  joint_names_.end = reinterpret_cast<char**>(buffer);
+  joint_names_ = fill_span<char*>(buffer, _num_joints);
 
-  // Properties, third biggest alignment.
-  joint_properties_.begin =
-      reinterpret_cast<Skeleton::JointProperties*>(buffer);
-  assert(math::IsAligned(joint_properties_.begin,
-                         OZZ_ALIGN_OF(Skeleton::JointProperties)));
-  buffer += properties_size;
-  joint_properties_.end = reinterpret_cast<Skeleton::JointProperties*>(buffer);
+  // Parents, third biggest alignment.
+  joint_parents_ = fill_span<int16_t>(buffer, _num_joints);
 
   // Remaning buffer will be used to store joint names.
-  return buffer;
+  assert(buffer.size_bytes() == _chars_size &&
+         "Whole buffer should be consumned");
+  return buffer.data();
 }
 
 void Skeleton::Deallocate() {
-  memory::default_allocator()->Deallocate(bind_pose_.begin);
-  bind_pose_.Clear();
-  joint_names_.Clear();
-  joint_properties_.Clear();
+  memory::default_allocator()->Deallocate(as_writable_bytes(joint_bind_poses_).data());
+  joint_bind_poses_ = {};
+  joint_names_ = {};
+  joint_parents_ = {};
 }
 
 void Skeleton::Save(ozz::io::OArchive& _archive) const {
@@ -155,19 +113,15 @@ void Skeleton::Save(ozz::io::OArchive& _archive) const {
   }
   _archive << static_cast<int32_t>(chars_count);
   _archive << ozz::io::MakeArray(joint_names_[0], chars_count);
-
-  // Stores joint's properties.
-  _archive << ozz::io::MakeArray(joint_properties_);
-
-  // Stores bind poses.
-  _archive << ozz::io::MakeArray(bind_pose_);
+  _archive << ozz::io::MakeArray(joint_parents_);
+  _archive << ozz::io::MakeArray(joint_bind_poses_);
 }
 
 void Skeleton::Load(ozz::io::IArchive& _archive, uint32_t _version) {
   // Deallocate skeleton in case it was already used before.
   Deallocate();
 
-  if (_version != 1) {
+  if (_version != 2) {
     log::Err() << "Unsupported Skeleton version " << _version << "."
                << std::endl;
     return;
@@ -200,8 +154,8 @@ void Skeleton::Load(ozz::io::IArchive& _archive, uint32_t _version) {
   // num_joints is > 0, as this was tested at the beginning of the function.
   joint_names_[num_joints - 1] = cursor;
 
-  _archive >> ozz::io::MakeArray(joint_properties_);
-  _archive >> ozz::io::MakeArray(bind_pose_);
+  _archive >> ozz::io::MakeArray(joint_parents_);
+  _archive >> ozz::io::MakeArray(joint_bind_poses_);
 }
-}  // animation
-}  // ozz
+}  // namespace animation
+}  // namespace ozz

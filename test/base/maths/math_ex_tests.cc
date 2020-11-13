@@ -3,7 +3,7 @@
 // ozz-animation is hosted at http://github.com/guillaumeblanc/ozz-animation  //
 // and distributed under the MIT License (MIT).                               //
 //                                                                            //
-// Copyright (c) 2015 Guillaume Blanc                                         //
+// Copyright (c) Guillaume Blanc                                              //
 //                                                                            //
 // Permission is hereby granted, free of charge, to any person obtaining a    //
 // copy of this software and associated documentation files (the "Software"), //
@@ -32,13 +32,13 @@
 
 #include "ozz/base/gtest_helper.h"
 
-TEST(Trigonometry, MathEx) {
+TEST(Trigonometry, ozz_math_ex) {
   EXPECT_FLOAT_EQ(ozz::math::kPi, 3.1415926535897932384626433832795f);
   EXPECT_FLOAT_EQ(ozz::math::kPi * ozz::math::kRadianToDegree, 180.f);
   EXPECT_FLOAT_EQ(180.f * ozz::math::kDegreeToRadian, ozz::math::kPi);
 }
 
-TEST(FloatArithmetic, MathEx) {
+TEST(FloatArithmetic, ozz_math_ex) {
   EXPECT_FLOAT_EQ(ozz::math::Lerp(0.f, 1.f, 0.f), 0.f);
   EXPECT_FLOAT_EQ(ozz::math::Lerp(0.f, 1.f, 1.f), 1.f);
   EXPECT_FLOAT_EQ(ozz::math::Lerp(0.f, 1.f, .3f), .3f);
@@ -46,7 +46,7 @@ TEST(FloatArithmetic, MathEx) {
   EXPECT_FLOAT_EQ(ozz::math::Lerp(0.f, 1.f, -12.f), -12.f);
 }
 
-TEST(FloatComparison, MathEx) {
+TEST(FloatComparison, ozz_math_ex) {
   const float a = {.5f};
   const float b = {4.f};
   const float c = {2.f};
@@ -67,7 +67,7 @@ TEST(FloatComparison, MathEx) {
   EXPECT_FLOAT_EQ(clamp1, c);
 }
 
-TEST(Select, MathEx) {
+TEST(Select, ozz_math_ex) {
   int a = -27, b = 46;
   int *pa = &a, *pb = &b;
   int *cpa = &a, *cpb = &b;
@@ -95,27 +95,4 @@ TEST(Select, MathEx) {
     EXPECT_EQ(ozz::math::Select(false, cpa, cpb), cpb);
     EXPECT_EQ(ozz::math::Select(false, pa, cpb), cpb);
   }
-}
-
-TEST(IntegerAlignment, Memory) {
-  {
-    short s = 0x1234;
-    int aligned_s = ozz::math::Align(s, 128);
-    EXPECT_TRUE(aligned_s == 0x1280);
-    EXPECT_TRUE(ozz::math::IsAligned(aligned_s, 128));
-  }
-
-  {
-    int i = 0x00a01234;
-    int aligned_i = ozz::math::Align(i, 1024);
-    EXPECT_TRUE(aligned_i == 0x00a01400);
-    EXPECT_TRUE(ozz::math::IsAligned(aligned_i, 1024));
-  }
-}
-
-TEST(PointerAlignment, Memory) {
-  void* p = reinterpret_cast<void*>(0x00a01234);
-  void* aligned_p = ozz::math::Align(p, 1024);
-  EXPECT_TRUE(aligned_p == reinterpret_cast<void*>(0x00a01400));
-  EXPECT_TRUE(ozz::math::IsAligned(aligned_p, 1024));
 }

@@ -3,7 +3,7 @@
 // ozz-animation is hosted at http://github.com/guillaumeblanc/ozz-animation  //
 // and distributed under the MIT License (MIT).                               //
 //                                                                            //
-// Copyright (c) 2015 Guillaume Blanc                                         //
+// Copyright (c) Guillaume Blanc                                              //
 //                                                                            //
 // Permission is hereby granted, free of charge, to any person obtaining a    //
 // copy of this software and associated documentation files (the "Software"), //
@@ -25,14 +25,12 @@
 //                                                                            //
 //----------------------------------------------------------------------------//
 
-#include "ozz/geometry/runtime/skinning_job.h"
-
 #include "gtest/gtest.h"
-
+#include "ozz/base/containers/vector.h"
 #include "ozz/base/log.h"
 #include "ozz/base/maths/gtest_math_helper.h"
 #include "ozz/base/maths/simd_math.h"
-#include "ozz/base/memory/allocator.h"
+#include "ozz/geometry/runtime/skinning_job.h"
 
 using ozz::geometry::SkinningJob;
 
@@ -58,8 +56,7 @@ TEST(JobValidity, SkinningJob) {
     job.vertex_count = 0;
     job.influences_count = 1;
     job.joint_matrices = matrices;
-    job.joint_indices.begin = joint_indices;
-    job.joint_indices.end = joint_indices + 2;
+    job.joint_indices = {joint_indices, 2};
     job.joint_indices_stride = sizeof(uint16_t) * 1;
     job.in_positions = in_positions;
     job.in_positions_stride = sizeof(float) * 3;
@@ -72,8 +69,7 @@ TEST(JobValidity, SkinningJob) {
     job.vertex_count = 0;
     job.influences_count = 0;
     job.joint_matrices = matrices;
-    job.joint_indices.begin = joint_indices;
-    job.joint_indices.end = joint_indices + 2;
+    job.joint_indices = {joint_indices, 1};
     job.joint_indices_stride = sizeof(uint16_t) * 1;
     job.in_positions = in_positions;
     job.in_positions_stride = sizeof(float) * 3;
@@ -86,8 +82,7 @@ TEST(JobValidity, SkinningJob) {
     job.vertex_count = 2;
     job.influences_count = 1;
     job.joint_matrices = matrices;
-    job.joint_indices.begin = joint_indices;
-    job.joint_indices.end = joint_indices + 2;
+    job.joint_indices = {joint_indices, 2};
     job.joint_indices_stride = sizeof(uint16_t) * 1;
     job.in_positions = in_positions;
     job.in_positions_stride = sizeof(float) * 3;
@@ -100,11 +95,9 @@ TEST(JobValidity, SkinningJob) {
     job.vertex_count = 2;
     job.influences_count = 2;
     job.joint_matrices = matrices;
-    job.joint_indices.begin = joint_indices;
-    job.joint_indices.end = joint_indices + 4;
+    job.joint_indices = {joint_indices, 4};
     job.joint_indices_stride = sizeof(uint16_t) * 2;
-    job.joint_weights.begin = joint_weights;
-    job.joint_weights.end = joint_weights + 2;
+    job.joint_weights = {joint_weights, 2};
     job.joint_weights_stride = sizeof(float) * 1;
     job.in_positions = in_positions;
     job.in_positions_stride = sizeof(float) * 3;
@@ -117,11 +110,9 @@ TEST(JobValidity, SkinningJob) {
     job.vertex_count = 2;
     job.influences_count = 3;
     job.joint_matrices = matrices;
-    job.joint_indices.begin = joint_indices;
-    job.joint_indices.end = joint_indices + 6;
+    job.joint_indices = {joint_indices, 6};
     job.joint_indices_stride = sizeof(uint16_t) * 2;
-    job.joint_weights.begin = joint_weights;
-    job.joint_weights.end = joint_weights + 4;
+    job.joint_weights = {joint_weights, 4};
     job.joint_weights_stride = sizeof(float) * 2;
     job.in_positions = in_positions;
     job.in_positions_stride = sizeof(float) * 3;
@@ -134,11 +125,9 @@ TEST(JobValidity, SkinningJob) {
     job.vertex_count = 2;
     job.influences_count = 4;
     job.joint_matrices = matrices;
-    job.joint_indices.begin = joint_indices;
-    job.joint_indices.end = joint_indices + 8;
+    job.joint_indices = joint_indices;
     job.joint_indices_stride = sizeof(uint16_t) * 2;
-    job.joint_weights.begin = joint_weights;
-    job.joint_weights.end = joint_weights + 6;
+    job.joint_weights = {joint_weights, 6};
     job.joint_weights_stride = sizeof(float) * 2;
     job.in_positions = in_positions;
     job.in_positions_stride = sizeof(float) * 3;
@@ -204,8 +193,7 @@ TEST(JobValidity, SkinningJob) {
     job.vertex_count = 2;
     job.influences_count = 2;
     job.joint_matrices = matrices;
-    job.joint_indices.begin = joint_indices;
-    job.joint_indices.end = joint_indices + 3;
+    job.joint_indices = {joint_indices, 3};
     job.joint_indices_stride = sizeof(uint16_t) * 2;
     job.joint_weights = joint_weights;
     job.joint_weights_stride = sizeof(float) * 1;
@@ -237,8 +225,7 @@ TEST(JobValidity, SkinningJob) {
     job.joint_matrices = matrices;
     job.joint_indices = joint_indices;
     job.joint_indices_stride = sizeof(uint16_t) * 2;
-    job.joint_weights.begin = joint_weights;
-    job.joint_weights.end = joint_weights + 1;
+    job.joint_weights = {joint_weights, 1};
     job.joint_weights_stride = sizeof(float) * 1;
     job.in_positions = in_positions;
     job.in_positions_stride = sizeof(float) * 3;
@@ -426,20 +413,6 @@ TEST(JobValidity, SkinningJob) {
     job.in_tangents_stride = sizeof(float) * 3;
     job.out_tangents = out_tangents;
     job.out_tangents_stride = sizeof(float) * 3;
-    EXPECT_FALSE(job.Validate());
-  }
-  {  // Invalid job with 1 influence, bad inverse transposed matrices.
-    SkinningJob job;
-    job.vertex_count = 2;
-    job.influences_count = 1;
-    job.joint_matrices = matrices;
-    job.joint_inverse_transpose_matrices.begin = it_matrices;
-    job.joint_indices = joint_indices;
-    job.joint_indices_stride = sizeof(uint16_t) * 2;
-    job.in_positions = in_positions;
-    job.in_positions_stride = sizeof(float) * 3;
-    job.out_positions = out_positions;
-    job.out_positions_stride = sizeof(float) * 3;
     EXPECT_FALSE(job.Validate());
   }
 }
@@ -1133,16 +1106,13 @@ TEST(Benchmark, SkinningJob) {
   const int joint_count = 100;
 
   // Prepares matrices.
-  ozz::memory::Allocator* allocator = ozz::memory::default_allocator();
-  ozz::Range<ozz::math::Float4x4> matrices =
-      allocator->AllocateRange<ozz::math::Float4x4>(joint_count);
+  ozz::vector<ozz::math::Float4x4> matrices(joint_count);
   for (int i = 0; i < joint_count; ++i) {
     matrices[i] = ozz::math::Float4x4::identity();
   }
 
   // Prepares vertices.
-  ozz::Range<BenchVertexIn> in_vertices =
-      allocator->AllocateRange<BenchVertexIn>(vertex_count + 1);
+  ozz::vector<BenchVertexIn> in_vertices(vertex_count + 1);
   for (int i = 0; i < vertex_count; ++i) {
     BenchVertexIn& vertex = in_vertices[i];
     for (size_t j = 0; j < OZZ_ARRAY_SIZE(vertex.indices); ++j) {
@@ -1159,24 +1129,23 @@ TEST(Benchmark, SkinningJob) {
       vertex.tangents[j] = cpnt;
     }
   }
-  ozz::Range<BenchVertexOut> out_vertices =
-      allocator->AllocateRange<BenchVertexOut>(vertex_count + 1);
+  ozz::vector<BenchVertexOut> out_vertices(vertex_count + 1);
+
+  const float* in_vertices_end =
+      reinterpret_cast<const float*>(array_end(in_vertices));
+  float* out_vertices_end = reinterpret_cast<float*>(array_end(out_vertices));
 
   SkinningJob base_job;
   base_job.vertex_count = vertex_count;
-  base_job.joint_matrices = matrices;
-  base_job.joint_indices.begin = in_vertices.begin->indices;
-  base_job.joint_indices.end =
-      reinterpret_cast<const uint16_t*>(in_vertices.end);
+  base_job.joint_matrices = make_span(matrices);
+  base_job.joint_indices = {in_vertices.data()->indices,
+                            reinterpret_cast<const uint16_t*>(in_vertices_end)};
   base_job.joint_indices_stride = sizeof(BenchVertexIn);
-  base_job.joint_weights.begin = in_vertices.begin->weights;
-  base_job.joint_weights.end = reinterpret_cast<const float*>(in_vertices.end);
+  base_job.joint_weights = {in_vertices.data()->weights, in_vertices_end};
   base_job.joint_weights_stride = sizeof(BenchVertexIn);
-  base_job.in_positions.begin = in_vertices.begin->pos;
-  base_job.in_positions.end = reinterpret_cast<const float*>(in_vertices.end);
+  base_job.in_positions = {in_vertices.data()->pos, in_vertices_end};
   base_job.in_positions_stride = sizeof(BenchVertexIn);
-  base_job.out_positions.begin = out_vertices.begin->pos;
-  base_job.out_positions.end = reinterpret_cast<const float*>(out_vertices.end);
+  base_job.out_positions = {out_vertices.data()->pos, out_vertices_end};
   base_job.out_positions_stride = sizeof(BenchVertexOut);
 
   for (int i = 1; i <= 8; ++i) {
@@ -1188,11 +1157,9 @@ TEST(Benchmark, SkinningJob) {
 
     // PNi
     {
-      job.in_normals.begin = in_vertices.begin->normals;
-      job.in_normals.end = reinterpret_cast<const float*>(in_vertices.end);
+      job.in_normals = {in_vertices.data()->normals, in_vertices_end};
       job.in_normals_stride = sizeof(BenchVertexIn);
-      job.out_normals.begin = out_vertices.begin->normals;
-      job.out_normals.end = reinterpret_cast<const float*>(out_vertices.end);
+      job.out_normals = {out_vertices.data()->normals, out_vertices_end};
       job.out_normals_stride = sizeof(BenchVertexOut);
 
       EXPECT_TRUE(job.Run());
@@ -1200,12 +1167,10 @@ TEST(Benchmark, SkinningJob) {
 
     // PitNi
     {
-      job.joint_inverse_transpose_matrices = matrices;
-      job.in_normals.begin = in_vertices.begin->normals;
-      job.in_normals.end = reinterpret_cast<const float*>(in_vertices.end);
+      job.joint_inverse_transpose_matrices = make_span(matrices);
+      job.in_normals = {in_vertices.data()->normals, in_vertices_end};
       job.in_normals_stride = sizeof(BenchVertexIn);
-      job.out_normals.begin = out_vertices.begin->normals;
-      job.out_normals.end = reinterpret_cast<const float*>(out_vertices.end);
+      job.out_normals = {out_vertices.data()->normals, out_vertices_end};
       job.out_normals_stride = sizeof(BenchVertexOut);
 
       EXPECT_TRUE(job.Run());
@@ -1213,11 +1178,9 @@ TEST(Benchmark, SkinningJob) {
 
     // PNTi
     {
-      job.in_tangents.begin = in_vertices.begin->tangents;
-      job.in_tangents.end = reinterpret_cast<const float*>(in_vertices.end);
+      job.in_tangents = {in_vertices.data()->tangents, in_vertices_end};
       job.in_tangents_stride = sizeof(BenchVertexIn);
-      job.out_tangents.begin = out_vertices.begin->tangents;
-      job.out_tangents.end = reinterpret_cast<const float*>(out_vertices.end);
+      job.out_tangents = {out_vertices.data()->tangents, out_vertices_end};
       job.out_tangents_stride = sizeof(BenchVertexOut);
 
       EXPECT_TRUE(job.Run());
@@ -1225,19 +1188,13 @@ TEST(Benchmark, SkinningJob) {
 
     // PitNTi
     {
-      job.joint_inverse_transpose_matrices = matrices;
-      job.in_tangents.begin = in_vertices.begin->tangents;
-      job.in_tangents.end = reinterpret_cast<const float*>(in_vertices.end);
+      job.joint_inverse_transpose_matrices = make_span(matrices);
+      job.in_tangents = {in_vertices.data()->tangents, in_vertices_end};
       job.in_tangents_stride = sizeof(BenchVertexIn);
-      job.out_tangents.begin = out_vertices.begin->tangents;
-      job.out_tangents.end = reinterpret_cast<const float*>(out_vertices.end);
+      job.out_tangents = {out_vertices.data()->tangents, out_vertices_end};
       job.out_tangents_stride = sizeof(BenchVertexOut);
 
       EXPECT_TRUE(job.Run());
     }
   }
-
-  allocator->Deallocate(matrices);
-  allocator->Deallocate(in_vertices);
-  allocator->Deallocate(out_vertices);
 }

@@ -3,7 +3,7 @@
 // ozz-animation is hosted at http://github.com/guillaumeblanc/ozz-animation  //
 // and distributed under the MIT License (MIT).                               //
 //                                                                            //
-// Copyright (c) 2015 Guillaume Blanc                                         //
+// Copyright (c) Guillaume Blanc                                              //
 //                                                                            //
 // Permission is hereby granted, free of charge, to any person obtaining a    //
 // copy of this software and associated documentation files (the "Software"), //
@@ -28,6 +28,8 @@
 #include "ozz/base/memory/allocator.h"
 
 #include <memory.h>
+
+#include <atomic>
 #include <cassert>
 #include <cstdlib>
 
@@ -41,14 +43,16 @@ struct Header {
   void* unaligned;
   size_t size;
 };
-}
+}  // namespace
 
-// Implements the basic heap allocator->
+// Implements the basic heap allocator.
 // Will trace allocation count and assert in case of a memory leak.
 class HeapAllocator : public Allocator {
  public:
-  HeapAllocator() : allocation_count_(0) {}
-  ~HeapAllocator() { assert(allocation_count_ == 0 && "Memory leak detected"); }
+  HeapAllocator() { allocation_count_.store(0); }
+  ~HeapAllocator() {
+    assert(allocation_count_.load() == 0 && "Memory leak detected");
+  }
 
  protected:
   void* Allocate(size_t _size, size_t _alignment) {
@@ -56,9 +60,9 @@ class HeapAllocator : public Allocator {
     const size_t to_allocate = _size + sizeof(Header) + _alignment - 1;
     char* unaligned = reinterpret_cast<char*>(malloc(to_allocate));
     if (!unaligned) {
-      return NULL;
+      return nullptr;
     }
-    char* aligned = ozz::math::Align(unaligned + sizeof(Header), _alignment);
+    char* aligned = ozz::Align(unaligned + sizeof(Header), _alignment);
     assert(aligned + _size <= unaligned + to_allocate);  // Don't overrun.
     // Set the header
     Header* header = reinterpret_cast<Header*>(aligned - sizeof(Header));
@@ -68,21 +72,6 @@ class HeapAllocator : public Allocator {
     // Allocation's succeeded.
     ++allocation_count_;
     return aligned;
-  }
-
-  void* Reallocate(void* _block, size_t _size, size_t _alignment) {
-    void* new_block = Allocate(_size, _alignment);
-    // Copies and deallocate the old memory block.
-    if (_block) {
-      Header* old_header = reinterpret_cast<Header*>(
-          reinterpret_cast<char*>(_block) - sizeof(Header));
-      memcpy(new_block, _block, old_header->size);
-      free(old_header->unaligned);
-
-      // Deallocation completed.
-      --allocation_count_;
-    }
-    return new_block;
   }
 
   void Deallocate(void* _block) {
@@ -98,7 +87,7 @@ class HeapAllocator : public Allocator {
  private:
   // Internal allocation count used to track memory leaks.
   // Should equals 0 at destruction time.
-  int allocation_count_;
+  std::atomic_int allocation_count_;
 };
 
 namespace {
@@ -118,5 +107,5 @@ Allocator* SetDefaulAllocator(Allocator* _allocator) {
   g_default_allocator = _allocator;
   return previous;
 }
-}  // memory
-}  // ozz
+}  // namespace memory
+}  // namespace ozz

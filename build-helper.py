@@ -4,7 +4,7 @@
 # ozz-animation is hosted at http://github.com/guillaumeblanc/ozz-animation  #
 # and distributed under the MIT License (MIT).                               #
 #                                                                            #
-# Copyright (c) 2015 Guillaume Blanc                                         #
+# Copyright (c) 2019 Guillaume Blanc                                         #
 #                                                                            #
 # Permission is hereby granted, free of charge, to any person obtaining a    #
 # copy of this software and associated documentation files (the "Software"), #
@@ -29,11 +29,12 @@
 # CMake python helper script.
 
 import subprocess
-import multiprocessing
 import shutil
 import sys
 import os
+import os.path
 import re
+import platform
 from functools import partial
 
 
@@ -42,9 +43,11 @@ root = os.path.abspath(os.path.join(os.getcwd(), '.'))
 build_dir = os.path.join(root, 'build')
 build_dir_cc = os.path.join(root, 'build-cc')
 cmake_cache_file = os.path.join(build_dir, 'CMakeCache.txt')
+ctest_cache_file = os.path.join(build_dir, 'CTestTestfile.cmake')
 config = 'Release'
 generators = {0: 'default'}
 generator = generators[0]
+enable_testing = False
 emscripten_path = os.environ.get('EMSCRIPTEN')
 
 def ValidateCMake():
@@ -94,6 +97,12 @@ def Configure():
   print("Configuring build project.")
   options = ['cmake']
   options += ['-D', 'CMAKE_BUILD_TYPE=' + config]
+
+  if (enable_testing) :
+    options += ['-D', 'ozz_build_tests=1']
+  else:
+    options += ['-D', 'ozz_build_tests=0']
+
   global generator
   if(generator != 'default'):
     options += ['-G', generator]
@@ -118,7 +127,11 @@ def ConfigureCC():
   options += ['-D', 'CMAKE_BUILD_TYPE=' + config]
   options += ['-D', 'CMAKE_TOOLCHAIN_FILE=' + emscripten_path + '/cmake/Modules/Platform/Emscripten.cmake']
 
-  options += ['-G', 'MinGW Makefiles']
+  if(platform.system() == 'Windows'):
+    options += ['-G', 'MinGW Makefiles']
+  else:
+    options += ['-G', 'Unix Makefiles']
+
   options += [root]
   config_process = subprocess.Popen(options, cwd=build_dir_cc)
   config_process.wait()
@@ -138,7 +151,7 @@ def Build(_build_dir = build_dir):
   options = ['cmake', '--build', _build_dir, '--config', config, '--use-stderr'];
   # Appends parallel build option if supported by the generator.
   if "Unix Makefiles" in generator:
-    options += ['--', '-j' + str(multiprocessing.cpu_count())]
+    options += ['--', '-j4']
   config_process = subprocess.Popen(options, cwd=_build_dir)
   config_process.wait()
   if(config_process.returncode != 0):
@@ -148,9 +161,9 @@ def Build(_build_dir = build_dir):
   return True
 
 def Test():
-  # Configure Test process.
+  # Configure Test process, parallelize a lot of tests in order to stress their dependencies
   print("Running unit tests.")
-  options = ['ctest' ,'--output-on-failure', '-j' + str(multiprocessing.cpu_count()), '--build-config', config]
+  options = ['ctest' ,'--output-on-failure', '-j8', '--build-config', config]
   config_process = subprocess.Popen(options, cwd=build_dir)
   config_process.wait()
   if(config_process.returncode != 0):
@@ -211,7 +224,7 @@ def FindGenerators():
   process = subprocess.Popen(['cmake', '--help'], stdout=subprocess.PIPE)
   stdout = process.communicate()[0]
   sub_stdout = stdout[stdout.rfind('Generators'):]
-  matches = re.findall(r"\s*(.+)\s*=.+", sub_stdout, re.MULTILINE)
+  matches = re.findall(r"\s*\**\s*(.+)\s*=.+", sub_stdout, re.MULTILINE)
   # Fills generators list
   global generators  
   for match in matches:
@@ -271,10 +284,30 @@ def SelecGenerator():
         return CleanBuildDir()
     return True
 
+def DetectTesting():
+  global enable_testing
+  enable_testing = os.path.isfile(ctest_cache_file)
+
+def EnableTesting():
+  global enable_testing
+  while True:
+    # Get input and check validity
+    answer = raw_input("enable testing (y/n): ")
+    if answer != 'y' and answer != 'n':
+      continue
+    wanted = (answer == 'y')
+    
+    # Get current state
+    if (enable_testing != wanted):
+      enable_testing = wanted
+      print("Testing state has changed.")
+      
+    return True
+
 def ClearScreen():
   os.system('cls' if os.name=='nt' else 'clear')
 
-def Exit():
+def Quit():
   sys.exit(0)
   return True
 
@@ -290,6 +323,9 @@ def main():
   # Detects available generators
   FindGenerators()
 
+  # Detects testing state
+  DetectTesting()
+
   # Update current generator
   print("DetectGenerator")
   global generator
@@ -302,9 +338,10 @@ def main():
     '4': ["Clean out-of-source build directory\n  ------------------", [CleanBuildDir]],
     '5': ["Pack binaries", [MakeBuildDir, Configure, Build, partial(PackBinaries, "ZIP"), partial(PackBinaries, "TBZ2")]],
     '6': ["Pack sources\n  ------------------", [MakeBuildDir, Configure, partial(PackSources, "ZIP"), partial(PackSources, "TBZ2")]],
-    '7': ["Select build configuration", [SelecConfig]],
-    '8': ["Select cmake generator\n  ------------------", [SelecGenerator]],
-    '9': ["Exit\n------------------", [Exit]]}
+    '7': ["Enable testing", [EnableTesting]],
+    '8': ["Select build configuration", [SelecConfig]],
+    '9': ["Select cmake generator\n  ------------------", [SelecGenerator]],
+    'q': ["Quit\n------------------", [Quit]]}
 
   # Adds emscripten
   global emscripten_path
@@ -319,6 +356,7 @@ def main():
     print("")
     print("Selected build configuration: %s") % config
     print("Selected generator: %s") % generator
+    print("Testing enabled: %s") % enable_testing
     print("")
     print("Choose an option:")
     print("------------------")
@@ -339,7 +377,7 @@ def main():
         else:
           print("\nExecution failed.\n")
           break
-    except Exception, e:
+    except Exception as e:
       print("\nAn error occured during script execution: %s\n") % e
 
     raw_input("Press enter to continue...")

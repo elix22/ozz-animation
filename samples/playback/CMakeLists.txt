@@ -2,15 +2,16 @@
 add_custom_command(
   DEPENDS $<$<BOOL:${ozz_build_fbx}>:BUILD_DATA>
           "${CMAKE_CURRENT_LIST_DIR}/README.md"
-          "${ozz_media_directory}/bin/alain_skeleton.ozz"
-          "${ozz_media_directory}/bin/alain_crossarms.ozz"
+          "${ozz_media_directory}/bin/pab_skeleton.ozz"
+          "${ozz_media_directory}/bin/pab_crossarms.ozz"
   OUTPUT  "${CMAKE_CURRENT_BINARY_DIR}/README.md"
           "${CMAKE_CURRENT_BINARY_DIR}/media/skeleton.ozz"
           "${CMAKE_CURRENT_BINARY_DIR}/media/animation.ozz"
   COMMAND ${CMAKE_COMMAND} -E make_directory media
   COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_LIST_DIR}/README.md" .
-  COMMAND ${CMAKE_COMMAND} -E copy "${ozz_media_directory}/bin/alain_skeleton.ozz" "./media/skeleton.ozz"
-  COMMAND ${CMAKE_COMMAND} -E copy "${ozz_media_directory}/bin/alain_crossarms.ozz" "./media/animation.ozz")
+  COMMAND ${CMAKE_COMMAND} -E copy "${ozz_media_directory}/bin/pab_skeleton.ozz" "./media/skeleton.ozz"
+  COMMAND ${CMAKE_COMMAND} -E copy "${ozz_media_directory}/bin/pab_crossarms.ozz" "./media/animation.ozz"
+  VERBATIM)
 
 add_executable(sample_playback
   sample_playback.cc
@@ -31,6 +32,7 @@ if(EMSCRIPTEN)
   install(FILES
     ${CMAKE_CURRENT_BINARY_DIR}/sample_playback.html
     ${CMAKE_CURRENT_BINARY_DIR}/sample_playback.js
+    ${CMAKE_CURRENT_BINARY_DIR}/sample_playback.wasm
     DESTINATION bin/samples/playback)
 else()
   install(TARGETS sample_playback DESTINATION bin/samples/playback)

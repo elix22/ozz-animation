@@ -1,15 +1,16 @@
 add_custom_command(
   DEPENDS $<$<BOOL:${ozz_build_fbx}>:BUILD_DATA>
           "${CMAKE_CURRENT_LIST_DIR}/README.md"
-          "${ozz_media_directory}/bin/alain_skeleton.ozz"
-          "${ozz_media_directory}/bin/alain_atlas_raw.ozz"
+          "${ozz_media_directory}/bin/pab_skeleton.ozz"
+          "${ozz_media_directory}/bin/pab_atlas_raw.ozz"
   OUTPUT  "${CMAKE_CURRENT_BINARY_DIR}/README.md"
           "${CMAKE_CURRENT_BINARY_DIR}/media/skeleton.ozz"
           "${CMAKE_CURRENT_BINARY_DIR}/media/animation_raw.ozz"
   COMMAND ${CMAKE_COMMAND} -E make_directory media
   COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_LIST_DIR}/README.md" .
-  COMMAND ${CMAKE_COMMAND} -E copy "${ozz_media_directory}/bin/alain_skeleton.ozz" "./media/skeleton.ozz"
-  COMMAND ${CMAKE_COMMAND} -E copy "${ozz_media_directory}/bin/alain_atlas_raw.ozz" "./media/animation_raw.ozz")
+  COMMAND ${CMAKE_COMMAND} -E copy "${ozz_media_directory}/bin/pab_skeleton.ozz" "./media/skeleton.ozz"
+  COMMAND ${CMAKE_COMMAND} -E copy "${ozz_media_directory}/bin/pab_atlas_raw.ozz" "./media/animation_raw.ozz"
+  VERBATIM)
 
 add_executable(sample_optimize
   sample_optimize.cc
@@ -32,6 +33,7 @@ if(EMSCRIPTEN)
   install(FILES
     ${CMAKE_CURRENT_BINARY_DIR}/sample_optimize.html
     ${CMAKE_CURRENT_BINARY_DIR}/sample_optimize.js
+    ${CMAKE_CURRENT_BINARY_DIR}/sample_optimize.wasm
     DESTINATION bin/samples/optimize)
 else()
   install(TARGETS sample_optimize DESTINATION bin/samples/optimize)

@@ -3,7 +3,7 @@
 // ozz-animation is hosted at http://github.com/guillaumeblanc/ozz-animation  //
 // and distributed under the MIT License (MIT).                               //
 //                                                                            //
-// Copyright (c) 2015 Guillaume Blanc                                         //
+// Copyright (c) Guillaume Blanc                                              //
 //                                                                            //
 // Permission is hereby granted, free of charge, to any person obtaining a    //
 // copy of this software and associated documentation files (the "Software"), //
@@ -35,6 +35,17 @@
 #if !defined(OZZ_BUILD_SIMD_REF)
 
 // Try to match a SSE2+ version.
+#if defined(__AVX2__) || defined(OZZ_SIMD_AVX2)
+#include <immintrin.h>
+#define OZZ_SIMD_AVX2
+#define OZZ_SIMD_AVX  // avx is available if avx2 is.
+#endif
+
+#if defined(__FMA__) || defined(OZZ_SIMD_FMA)
+#include <immintrin.h>
+#define OZZ_SIMD_FMA
+#endif
+
 #if defined(__AVX__) || defined(OZZ_SIMD_AVX)
 #include <immintrin.h>
 #define OZZ_SIMD_AVX
@@ -94,8 +105,8 @@ typedef __m128i SimdInt4;
 
 // Argument type for Int4.
 typedef const __m128i _SimdInt4;
-}  // math
-}  // ozz
+}  // namespace math
+}  // namespace ozz
 
 #else  // No builtin simd available
 
@@ -108,7 +119,7 @@ typedef const __m128i _SimdInt4;
 
 // Vector of four floating point values.
 struct SimdFloat4Def {
-  OZZ_ALIGN(16) float x;
+  alignas(16) float x;
   float y;
   float z;
   float w;
@@ -116,7 +127,7 @@ struct SimdFloat4Def {
 
 // Vector of four integer values.
 struct SimdInt4Def {
-  OZZ_ALIGN(16) int x;
+  alignas(16) int x;
   int y;
   int z;
   int w;
@@ -137,8 +148,12 @@ typedef SimdInt4Def SimdInt4;
 // Argument type for SimdInt4.
 typedef const SimdInt4& _SimdInt4;
 
-}  // math
-}  // ozz
-
+}  // namespace math
+}  // namespace ozz
 #endif  // OZZ_SIMD_x
+
+// Native SIMD operator already exist on some compilers, so they have to be disable from ozz implementation
+#if !defined(OZZ_SIMD_REF) && (defined(__GNUC__) || defined(__llvm__))
+#define OZZ_DISABLE_SSE_NATIVE_OPERATORS
+#endif
 #endif  // OZZ_OZZ_BASE_MATHS_INTERNAL_SIMD_MATH_CONFIG_H_

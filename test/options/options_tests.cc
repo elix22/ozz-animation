@@ -3,7 +3,7 @@
 // ozz-animation is hosted at http://github.com/guillaumeblanc/ozz-animation  //
 // and distributed under the MIT License (MIT).                               //
 //                                                                            //
-// Copyright (c) 2015 Guillaume Blanc                                         //
+// Copyright (c) Guillaume Blanc                                              //
 //                                                                            //
 // Permission is hereby granted, free of charge, to any person obtaining a    //
 // copy of this software and associated documentation files (the "Software"), //
@@ -54,7 +54,7 @@ TEST(Registration, Options) {
     ozz::options::BoolOption b1("b1", "1st option", false, false);
     EXPECT_TRUE(parser.RegisterOption(&b1));
 
-    ozz::options::BoolOption b2("b2", NULL, false, false);
+    ozz::options::BoolOption b2("b2", nullptr, false, false);
     EXPECT_TRUE(parser.RegisterOption(&b2));
 
     EXPECT_FALSE(parser.UnregisterOption(&b2));
@@ -63,15 +63,15 @@ TEST(Registration, Options) {
 
   {  // Invalid registration.
     ozz::options::Parser parser;
-    EXPECT_FALSE(parser.RegisterOption(NULL));
+    EXPECT_FALSE(parser.RegisterOption(nullptr));
 
-    ozz::options::BoolOption bnull(NULL, "A option", false, false);
+    ozz::options::BoolOption bnull(nullptr, "A option", false, false);
     EXPECT_FALSE(parser.RegisterOption(&bnull));
 
-    ozz::options::BoolOption bversion("version", NULL, false, false);
+    ozz::options::BoolOption bversion("version", nullptr, false, false);
     EXPECT_FALSE(parser.RegisterOption(&bversion));
 
-    ozz::options::BoolOption bhelp("help", NULL, false, false);
+    ozz::options::BoolOption bhelp("help", nullptr, false, false);
     EXPECT_FALSE(parser.RegisterOption(&bhelp));
   }
 
@@ -79,9 +79,9 @@ TEST(Registration, Options) {
     ozz::options::Parser parser;
 
     // Needs to pre-allocate vectors to avoid objects to move in memory.
-    ozz::Vector<ozz::options::BoolOption>::Std options;
+    ozz::vector<ozz::options::BoolOption> options;
     options.reserve(parser.max_options() + 1);
-    ozz::Vector<ozz::String::Std>::Std names;
+    ozz::vector<ozz::string> names;
     names.reserve(parser.max_options());
 
     // Registers the maximum allowed options.
@@ -90,12 +90,12 @@ TEST(Registration, Options) {
       str << "option " << i << std::ends;
       names.push_back(str.str().c_str());
       options.push_back(
-          ozz::options::BoolOption(names[i].c_str(), NULL, false, false));
+          ozz::options::BoolOption(names[i].c_str(), nullptr, false, false));
       EXPECT_TRUE(parser.RegisterOption(&options.back()));
     }
 
     // Registers "too much" options.
-    options.push_back(ozz::options::BoolOption("too much", NULL, false, false));
+    options.push_back(ozz::options::BoolOption("too much", nullptr, false, false));
     EXPECT_FALSE(parser.RegisterOption(&options.back()));
 
     // Unregisters all options.
@@ -120,17 +120,17 @@ TEST(Registration, Options) {
     EXPECT_FALSE(parser.UnregisterOption(&b));
   }
 
-  {  // Invalid un-registration (NULL option).
+  {  // Invalid un-registration (nullptr option).
     ozz::options::Parser parser;
-    EXPECT_FALSE(parser.UnregisterOption(NULL));
+    EXPECT_FALSE(parser.UnregisterOption(nullptr));
   }
 
   {  // Duplicated option names.
     ozz::options::Parser parser;
-    ozz::options::BoolOption b1("boolean", NULL, false, false);
+    ozz::options::BoolOption b1("boolean", nullptr, false, false);
     EXPECT_TRUE(parser.RegisterOption(&b1));
 
-    ozz::options::BoolOption b2("boolean", NULL, false, false);
+    ozz::options::BoolOption b2("boolean", nullptr, false, false);
     EXPECT_FALSE(parser.RegisterOption(&b2));
 
     EXPECT_FALSE(parser.UnregisterOption(&b2));
@@ -147,7 +147,7 @@ TEST(ParseErrors, Options) {
   EXPECT_TRUE(bool_option);
   EXPECT_TRUE(parser.RegisterOption(&bool_option));
 
-  EXPECT_EQ(parser.Parse(0, NULL), ozz::options::kExitFailure);
+  EXPECT_EQ(parser.Parse(0, nullptr), ozz::options::kExitFailure);
   EXPECT_EQ(parser.Parse(0, argv), ozz::options::kExitFailure);
 
   // Expects empty path and name by default.
@@ -400,6 +400,19 @@ TEST(BuiltInOptions, Options) {
                   std::cout, "version 1.2.3");
   }
 
+  {  // Valid built-in "version" option, with required arguments.
+    const char* argv[] = {"c:/a path/test.exe", "--version"};
+    const int argc = OZZ_ARRAY_SIZE(argv);
+    ozz::options::Parser parser;
+    ozz::options::BoolOption bool_option("bool", "", false, true);
+    EXPECT_FALSE(bool_option);
+    EXPECT_TRUE(parser.RegisterOption(&bool_option));
+    parser.set_version("1.2.3");
+    EXPECT_EQ_LOG(parser.Parse(argc, argv), ozz::options::kExitSuccess,
+                  std::cout, "version 1.2.3");
+    EXPECT_TRUE(parser.UnregisterOption(&bool_option));
+  }
+
   {  // Valid built-in "version" option.
     const char* argv[] = {"c:/a path/test.exe", "--version=true"};
     const int argc = OZZ_ARRAY_SIZE(argv);
@@ -430,7 +443,7 @@ TEST(BuiltInOptions, Options) {
     const char* argv[] = {"c:/a path/test.exe", "--version", "--something"};
     const int argc = OZZ_ARRAY_SIZE(argv);
     ozz::options::Parser parser;
-    ozz::options::BoolOption something("something", NULL, false, false);
+    ozz::options::BoolOption something("something", nullptr, false, false);
     EXPECT_TRUE(parser.RegisterOption(&something));
     EXPECT_EQ_LOG(parser.Parse(argc, argv), ozz::options::kExitFailure,
                   std::cout, "exclusive");
@@ -448,7 +461,7 @@ TEST(BuiltInOptions, Options) {
     const char* argv[] = {"c:/a path/test.exe", "--help", "--something"};
     const int argc = OZZ_ARRAY_SIZE(argv);
     ozz::options::Parser parser;
-    ozz::options::BoolOption something("something", NULL, false, false);
+    ozz::options::BoolOption something("something", nullptr, false, false);
     EXPECT_TRUE(parser.RegisterOption(&something));
     EXPECT_EQ_LOG(parser.Parse(argc, argv), ozz::options::kExitFailure,
                   std::cout, "exclusive");
@@ -593,7 +606,7 @@ TEST(MultipleCall, Options) {
   {  // Built-in flag.
     const char* argv[] = {"c:/a path/test.exe", "--help"};
     const int argc = OZZ_ARRAY_SIZE(argv);
-    EXPECT_EQ_LOG(parser.Parse(argc, argv), ozz::options::kExitFailure,
+    EXPECT_EQ_LOG(parser.Parse(argc, argv), ozz::options::kExitSuccess,
                   std::cout, "Usage");
     EXPECT_FALSE(bool_option);
     EXPECT_EQ(int_required_option, 27);
@@ -608,26 +621,22 @@ TEST(MultipleCall, Options) {
   }
 }
 
-// clang-format off
-
 // Internal test EXPECT_ macro. Ensures parse failed, display usage and exit.
 #define EXPECT_FLAG_INVALID(_parser, _arg)                               \
-do {                                                                     \
+  do {                                                                   \
     const char* argv[] = {"c:/a path/test.exe", _arg};                   \
     const int argc = OZZ_ARRAY_SIZE(argv);                               \
     EXPECT_EQ_LOG(_parser.Parse(argc, argv), ozz::options::kExitFailure, \
                   std::cout, "Usage");                                   \
-} while (void(0), 0)
+  } while (void(0), 0)
 
 // Internal test EXPECT_ macro. Ensures parse succeed.
 #define EXPECT_FLAG_VALID(_parser, _arg)                          \
-do {                                                              \
+  do {                                                            \
     const char* argv[] = {"c:/a path/test.exe", _arg};            \
     const int argc = OZZ_ARRAY_SIZE(argv);                        \
     EXPECT_EQ(_parser.Parse(argc, argv), ozz::options::kSuccess); \
-} while (void(0), 0)
-
-// clang-format on
+  } while (void(0), 0)
 
 TEST(ParseBool, Options) {
   {  // Invalid options

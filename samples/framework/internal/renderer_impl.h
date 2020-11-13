@@ -3,7 +3,7 @@
 // ozz-animation is hosted at http://github.com/guillaumeblanc/ozz-animation  //
 // and distributed under the MIT License (MIT).                               //
 //                                                                            //
-// Copyright (c) 2015 Guillaume Blanc                                         //
+// Copyright (c) Guillaume Blanc                                              //
 //                                                                            //
 // Permission is hereby granted, free of charge, to any person obtaining a    //
 // copy of this software and associated documentation files (the "Software"), //
@@ -41,6 +41,12 @@
 // Including glfw includes gl.h
 #include "GL/glfw.h"
 
+#ifdef EMSCRIPTEN
+// include features as core functions.
+#include <GLES2/gl2.h>
+
+#else  // EMSCRIPTEN
+
 // Detects already defined GL_VERSION and deduces required extensions.
 #ifndef GL_VERSION_1_5
 #define OZZ_GL_VERSION_1_5_EXT
@@ -49,10 +55,14 @@
 #define OZZ_GL_VERSION_2_0_EXT
 #endif  // GL_VERSION_2_0
 
+#endif  // EMSCRIPTEN
+
+// Include features as extentions
 #include "GL/glext.h"
 
 #include "framework/renderer.h"
 #include "ozz/base/containers/vector.h"
+#include "ozz/base/memory/unique_ptr.h"
 
 // Provides helper macro to test for glGetError on a gl call.
 #ifndef NDEBUG
@@ -61,8 +71,8 @@
     gl##_f;                       \
     GLenum error = glGetError();  \
     assert(error == GL_NO_ERROR); \
-  \
-} while (void(0), 0)
+                                  \
+  } while (void(0), 0)
 #else  // NDEBUG
 #define GL(_f) gl##_f
 #endif  // NDEBUG
@@ -96,16 +106,16 @@ class RendererImpl : public Renderer {
   // See Renderer for all the details about the API.
   virtual bool Initialize();
 
-  virtual void DrawAxes(const ozz::math::Float4x4& _transform);
+  virtual bool DrawAxes(const ozz::math::Float4x4& _transform);
 
-  virtual void DrawGrid(int _cell_count, float _cell_size);
+  virtual bool DrawGrid(int _cell_count, float _cell_size);
 
   virtual bool DrawSkeleton(const animation::Skeleton& _skeleton,
                             const ozz::math::Float4x4& _transform,
                             bool _draw_joints);
 
   virtual bool DrawPosture(const animation::Skeleton& _skeleton,
-                           ozz::Range<const ozz::math::Float4x4> _matrices,
+                           ozz::span<const ozz::math::Float4x4> _matrices,
                            const ozz::math::Float4x4& _transform,
                            bool _draw_joints);
 
@@ -114,11 +124,19 @@ class RendererImpl : public Renderer {
                          const Color _colors[2]);
 
   virtual bool DrawBoxShaded(const ozz::math::Box& _box,
-                             ozz::Range<const ozz::math::Float4x4> _transforms,
+                             ozz::span<const ozz::math::Float4x4> _transforms,
                              Color _color);
 
+  virtual bool DrawSphereIm(float _radius,
+                            const ozz::math::Float4x4& _transform,
+                            const Color _color);
+
+  virtual bool DrawSphereShaded(
+      float _radius, ozz::span<const ozz::math::Float4x4> _transforms,
+      Color _color);
+
   virtual bool DrawSkinnedMesh(const Mesh& _mesh,
-                               const Range<math::Float4x4> _skinning_matrices,
+                               const span<math::Float4x4> _skinning_matrices,
                                const ozz::math::Float4x4& _transform,
                                const Options& _options = Options());
 
@@ -126,23 +144,26 @@ class RendererImpl : public Renderer {
                         const ozz::math::Float4x4& _transform,
                         const Options& _options = Options());
 
-  virtual bool DrawVectors(ozz::Range<const float> _positions,
+  virtual bool DrawSegment(const math::Float3& _begin, const math::Float3& _end,
+                           Color _color, const ozz::math::Float4x4& _transform);
+
+  virtual bool DrawVectors(ozz::span<const float> _positions,
                            size_t _positions_stride,
-                           ozz::Range<const float> _directions,
+                           ozz::span<const float> _directions,
                            size_t _directions_stride, int _num_vectors,
-                           float _vector_length, Renderer::Color _color,
+                           float _vector_length, Color _color,
                            const ozz::math::Float4x4& _transform);
 
   virtual bool DrawBinormals(
-      ozz::Range<const float> _positions, size_t _positions_stride,
-      ozz::Range<const float> _normals, size_t _normals_stride,
-      ozz::Range<const float> _tangents, size_t _tangents_stride,
-      ozz::Range<const float> _handenesses, size_t _handenesses_stride,
-      int _num_vectors, float _vector_length, Renderer::Color _color,
+      ozz::span<const float> _positions, size_t _positions_stride,
+      ozz::span<const float> _normals, size_t _normals_stride,
+      ozz::span<const float> _tangents, size_t _tangents_stride,
+      ozz::span<const float> _handenesses, size_t _handenesses_stride,
+      int _num_vectors, float _vector_length, Color _color,
       const ozz::math::Float4x4& _transform);
 
   // Get GL immediate renderer implementation;
-  GlImmediateRenderer* immediate_renderer() const { return immediate_; }
+  GlImmediateRenderer* immediate_renderer() const { return immediate_.get(); }
 
   // Get application camera that provides rendering matrices.
   Camera* camera() const { return camera_; }
@@ -156,7 +177,7 @@ class RendererImpl : public Renderer {
     GLuint vbo;
     GLenum mode;
     GLsizei count;
-    SkeletonShader* shader;
+    ozz::unique_ptr<SkeletonShader> shader;
   };
 
   // Detects and initializes all OpenGL extension.
@@ -183,7 +204,7 @@ class RendererImpl : public Renderer {
 
   // Array of matrices used to store model space matrices during DrawSkeleton
   // execution.
-  ozz::Range<ozz::math::Float4x4> prealloc_models_;
+  ozz::vector<ozz::math::Float4x4> prealloc_models_;
 
   // Application camera that provides rendering matrices.
   Camera* camera_;
@@ -198,6 +219,7 @@ class RendererImpl : public Renderer {
   GLuint dynamic_index_bo_;
 
   // Volatile memory buffer that can be used within function scope.
+  // Minimum alignment is 16 bytes.
   class ScratchBuffer {
    public:
     ScratchBuffer();
@@ -213,19 +235,19 @@ class RendererImpl : public Renderer {
   ScratchBuffer scratch_buffer_;
 
   // Immediate renderer implementation.
-  GlImmediateRenderer* immediate_;
+  ozz::unique_ptr<GlImmediateRenderer> immediate_;
 
   // Ambient rendering shader.
-  AmbientShader* ambient_shader;
-  AmbientTexturedShader* ambient_textured_shader;
-  AmbientShaderInstanced* ambient_shader_instanced;
+  ozz::unique_ptr<AmbientShader> ambient_shader;
+  ozz::unique_ptr<AmbientTexturedShader> ambient_textured_shader;
+  ozz::unique_ptr<AmbientShaderInstanced> ambient_shader_instanced;
 
   // Checkered texture
   unsigned int checkered_texture_;
 };
-}  // internal
-}  // sample
-}  // ozz
+}  // namespace internal
+}  // namespace sample
+}  // namespace ozz
 
 // OpenGL 1.5 buffer object management functions, mandatory.
 #ifdef OZZ_GL_VERSION_1_5_EXT
@@ -303,9 +325,8 @@ extern PFNGLVERTEXATTRIBPOINTERPROC glVertexAttribPointer;
 #endif  // OZZ_GL_VERSION_2_0_EXT
 
 // OpenGL ARB_instanced_arrays extension, optional.
-#undef GL_ARB_instanced_arrays
-extern bool GL_ARB_instanced_arrays;
-extern PFNGLVERTEXATTRIBDIVISORARBPROC glVertexAttribDivisorARB;
-extern PFNGLDRAWARRAYSINSTANCEDARBPROC glDrawArraysInstancedARB;
-extern PFNGLDRAWELEMENTSINSTANCEDARBPROC glDrawElementsInstancedARB;
+extern bool GL_ARB_instanced_arrays_supported;
+extern PFNGLVERTEXATTRIBDIVISORARBPROC glVertexAttribDivisor_;
+extern PFNGLDRAWARRAYSINSTANCEDARBPROC glDrawArraysInstanced_;
+extern PFNGLDRAWELEMENTSINSTANCEDARBPROC glDrawElementsInstanced_;
 #endif  // OZZ_SAMPLES_FRAMEWORK_INTERNAL_RENDERER_IMPL_H_
